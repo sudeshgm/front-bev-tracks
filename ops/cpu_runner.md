@@ -30,7 +30,7 @@ Constraints: fp16, SDPA, no FlashAttention, do not pip-install torch. `transform
 
 ## Open request
 
-`ops/gpu_request.md` asks the GPU runner to commit `ret_v6` `eval.json` and `summary.md` onto `main`. Do not start another perception run for this.
+`ops/gpu_request.md` tells the GPU runner to stop. The 30 Hz Gaimersheim run is accepted. Do not hand it `scripts/gpu_job.sh` again.
 
 ## Later, do not start yet
 

@@ -1,7 +1,11 @@
 # GPU runner
 
-Run the Gaimersheim road again from current `main`, at the camera rate. Do not reuse the 20-frame pack.
+Stop. Do not run `scripts/gpu_job.sh`. Do not download more frames. Do not rerun Qwen-Drive.
 
-`bash scripts/gpu_job.sh` now fetches sequence `20180810_150607`, frames `12025` through `12139`, stride 1 (115 frames, 30 Hz). The previous run was every 6th frame.
+The accepted run is already in Drive folder `qwen-a2d2-gaimersheim-30hz`:
 
-This is about six times the last job, on the order of 40 minutes on the free T4 x2. When it exits 0, upload `results/eval.json` and `results/summary.md` to the Drive folder `qwen-a2d2-gaimersheim-30hz`. Reply with the SHA, the frame count, and the speed line.
+- 115 frames, `f000012025` through `f000012139`, 30 Hz
+- sequence `20180810_150607`
+- exit 0
+
+That job is closed. A second pass on the same clip is not ready. Wait until `main` contains a new script and this file names it. Until then, reply that you are idle.
