@@ -95,6 +95,19 @@ def test_lane_association():
     assert tracks[0]["hits"] == 4
 
 
+def test_parallel_copies_collapse():
+    frames = []
+    for i in range(4):
+        pose = {"x": i * 8.0, "y": 0.0, "yaw": 0.0}
+        # Two traces of the same edge, 0.4 m apart, each covering the next stretch.
+        ego = np.array([[x - pose["x"], -1.5 + (0.4 if i % 2 else 0.0)] for x in range(i * 8, i * 8 + 12)], dtype=np.float64)
+        frames.append({"token": str(i), "t": i * 0.2, "pose": pose, "maps": {"road_line": [], "road_edge": [ego]}})
+    tracks = track_lanes(frames, gate=0.2)
+    assert len(tracks) == 1, [(t["id"], t["hits"]) for t in tracks]
+    xs = [p[0] for p in tracks[0]["world"]]
+    assert max(xs) - min(xs) > 25
+
+
 def test_map_raster_becomes_a_line():
     raster = np.zeros((400, 200), dtype=np.uint8)
     # road_line is class 2. Draw a vertical strip (constant column = constant y).

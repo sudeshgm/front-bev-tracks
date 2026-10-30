@@ -430,4 +430,92 @@ def track_lanes(frames: list[dict], gate: float = 1.6) -> list[dict]:
                 "samples": track["samples"],
             }
         )
-    return published
+    return _collapse_lanes(published)
+
+
+def _collapse_lanes(tracks: list[dict]) -> list[dict]:
+    """One physical marking is traced many times, a few tenths of a metre apart.
+
+    Keep the straight pieces that follow the road, then stitch copies whose
+    lateral offset agrees and whose ranges along the road meet or overlap.
+    """
+    kept = []
+    for track in tracks:
+        world = np.asarray(track["world"], dtype=np.float64).reshape(-1, 2)
+        if len(world) < 2:
+            continue
+        length = _polyline_length(world)
+        chord = float(np.linalg.norm(world[-1] - world[0]))
+        angle = float(np.arctan2(world[-1, 1] - world[0, 1], world[-1, 0] - world[0, 0]))
+        if angle > np.pi / 2:
+            angle -= np.pi
+        if angle < -np.pi / 2:
+            angle += np.pi
+        if length < 8 or chord / max(length, 1e-6) < 0.9 or abs(angle) > 0.35:
+            continue
+        kept.append(
+            {
+                "track": track,
+                "length": length,
+                "y": float(world[:, 1].mean()),
+                "x0": float(world[:, 0].min()),
+                "x1": float(world[:, 0].max()),
+                "world": world,
+            }
+        )
+    kept.sort(key=lambda item: (item["track"]["name"], item["y"]))
+    groups: list[dict] = []
+    for item in kept:
+        group = None
+        for candidate in groups:
+            if candidate["name"] != item["track"]["name"]:
+                continue
+            if abs(candidate["y"] - item["y"]) >= 1.3:
+                continue
+            if item["x1"] < candidate["x0"] - 12 or candidate["x1"] < item["x0"] - 12:
+                continue
+            group = candidate
+            break
+        if group is None:
+            groups.append(
+                {
+                    "name": item["track"]["name"],
+                    "y": item["y"],
+                    "weight": item["length"],
+                    "hits": item["track"]["hits"],
+                    "x0": item["x0"],
+                    "x1": item["x1"],
+                    "world": [item["world"]],
+                    "samples": list(item["track"]["samples"]),
+                }
+            )
+            continue
+        group["y"] = (group["y"] * group["weight"] + item["y"] * item["length"]) / (group["weight"] + item["length"])
+        group["weight"] += item["length"]
+        group["hits"] += item["track"]["hits"]
+        group["x0"] = min(group["x0"], item["x0"])
+        group["x1"] = max(group["x1"], item["x1"])
+        group["world"].append(item["world"])
+        group["samples"].extend(item["track"]["samples"])
+    collapsed = []
+    for group in groups:
+        if group["x1"] - group["x0"] < 15:
+            continue
+        pts = np.concatenate(group["world"], axis=0)
+        pts = pts[np.argsort(pts[:, 0])]
+        keep = [pts[0]]
+        for point in pts[1:]:
+            if point[0] - keep[-1][0] >= 1.5:
+                keep.append(point)
+        if len(keep) < 2:
+            continue
+        collapsed.append(
+            {
+                "id": len(collapsed) + 1,
+                "name": group["name"],
+                "hits": group["hits"],
+                "world": np.round(np.stack(keep), 3).tolist(),
+                "samples": group["samples"],
+            }
+        )
+    return collapsed
