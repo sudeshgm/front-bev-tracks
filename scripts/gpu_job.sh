@@ -4,6 +4,9 @@
 set -euo pipefail
 # Less fragmentation: voxel pooling asks for one ~3.7 GiB block.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+# QD_CUDA_DEBUG=1: synchronous launches + voxel_pool logging, for a precise CUDA traceback.
+if [[ "${QD_CUDA_DEBUG:-0}" == "1" ]]; then export CUDA_LAUNCH_BLOCKING=1; fi
+# QD_PERCEPTION_DEVICE=cuda:0 forces the single-GPU layout (default: auto).
 cd "$(dirname "$0")/.."
 
 python -m pip install -q -r requirements-gpu.txt
@@ -48,6 +51,7 @@ python scripts/infer_and_track.py \
   --perception "${PERCEPTION:-Qwen/Qwen-Drive-1.0-4B/perception}" \
   --dtype float16 \
   --attn sdpa \
+  --perception-device "${QD_PERCEPTION_DEVICE:-auto}" \
   --output results
 
 echo "GPU job done. Return results/eval.json and results/summary.md"

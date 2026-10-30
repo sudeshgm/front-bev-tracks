@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -94,6 +95,58 @@ def _pick_perception_device(device: str, requested: str) -> str:
     return device
 
 
+def _cuda_debug() -> bool:
+    return os.environ.get("QD_CUDA_DEBUG", "0") == "1"
+
+
+def _guard_voxel_pool() -> None:
+    """Wrap the upstream voxel_pool_depth op: run it under its tensors' device,
+    refuse mixed devices, and check every index the CUDA kernel dereferences
+    (an out-of-range index is an illegal memory access, not an exception).
+    view_transform imports the op at call time, so patching the module works."""
+    import torch
+    from qwen_drive_perception import ops
+
+    original = ops.voxel_pool_depth
+
+    def guarded(img_feats, img_depth, voxel_coords, mask, B, X, Y, Z):
+        dev = img_feats.device
+        for name, ten in (("img_depth", img_depth), ("voxel_coords", voxel_coords), ("mask", mask)):
+            if ten.device != dev:
+                raise RuntimeError(f"voxel_pool_depth: {name} on {ten.device}, img_feats on {dev}")
+        # Every index the kernel reads must be inside its tensor.
+        n_b, n_img, _, H, W = img_feats.shape
+        n_img *= n_b
+        D = img_depth.shape[1]
+        if img_depth.shape[0] * D * H * W != img_depth.numel() or img_depth.shape[0] != n_img:
+            raise RuntimeError(
+                f"voxel_pool_depth: img_feats {tuple(img_feats.shape)} vs img_depth {tuple(img_depth.shape)}"
+            )
+        if mask.numel() != n_img * D * H * W:
+            raise RuntimeError(f"voxel_pool_depth: mask {tuple(mask.shape)} vs {n_img}x{D}x{H}x{W} points")
+        valid = voxel_coords.reshape(-1, 4)[mask.reshape(-1)]
+        if valid.numel():
+            lo = valid.min(0).values.tolist()
+            hi = valid.max(0).values.tolist()
+            if lo[0] < 0 or hi[0] >= B or min(lo[1:]) < 0 or hi[1] >= X or hi[2] >= Y or hi[3] >= Z:
+                raise RuntimeError(f"voxel_pool_depth: coords out of range lo={lo} hi={hi} B,X,Y,Z={B, X, Y, Z}")
+        if _cuda_debug():
+            print(
+                f"voxel_pool_depth on {dev}: feats {tuple(img_feats.shape)} {img_feats.dtype}, "
+                f"depth {tuple(img_depth.shape)}, valid {valid.shape[0]}, grid {B, X, Y, Z}",
+                flush=True,
+            )
+        if dev.type != "cuda":
+            return original(img_feats, img_depth, voxel_coords, mask, B, X, Y, Z)
+        with torch.cuda.device(dev):
+            out = original(img_feats, img_depth, voxel_coords, mask, B, X, Y, Z)
+            if _cuda_debug():
+                torch.cuda.synchronize(dev)
+        return out
+
+    ops.voxel_pool_depth = guarded
+
+
 def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str, perception_device: str = "auto"):
     import torch
     from transformers import AutoTokenizer
@@ -126,11 +179,19 @@ def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str, pe
     vlm_mod = vlm_mod.to(device).eval()
     if perc_device != device:
         # infer() runs the VLM, then calls bev_modeling with features and
-        # img_metas tensors still on the VLM device. Move them across.
-        def _to_perc(module, args, kwargs):
-            return _move_inplace(tuple(args), perc_device), _move_inplace(dict(kwargs), perc_device)
+        # img_metas tensors still on the VLM device. Move them across and run
+        # the BEV path with the perception GPU as the *current* device, so raw
+        # <<<>>> kernel launches and any default-device allocations land there.
+        bev_forward = head.bev_modeling.forward
 
-        head.bev_modeling.register_forward_pre_hook(_to_perc, with_kwargs=True)
+        def _bev_on_perc(*args, **kwargs):
+            args = _move_inplace(tuple(args), perc_device)
+            kwargs = _move_inplace(dict(kwargs), perc_device)
+            with torch.cuda.device(torch.device(perc_device)):
+                return bev_forward(*args, **kwargs)
+
+        head.bev_modeling.forward = _bev_on_perc
+    _guard_voxel_pool()
     print(f"vlm on {device}, perception head on {perc_device}", flush=True)
     # attach() takes the inner VLM and the PerceptionProcessor, not a tokenizer.
     processor = PerceptionProcessor(tokenizer)
@@ -154,7 +215,11 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default="float16", choices=["float16", "bfloat16", "float32"])
     parser.add_argument("--attn", default="sdpa")
-    parser.add_argument("--perception-device", default="auto", help="auto: cuda:1 when two GPUs exist")
+    parser.add_argument(
+        "--perception-device",
+        default=os.environ.get("QD_PERCEPTION_DEVICE", "auto"),
+        help="auto: cuda:1 when two GPUs exist. QD_PERCEPTION_DEVICE=cuda:0 forces one GPU.",
+    )
     parser.add_argument("--score", type=float, default=0.2)
     args = parser.parse_args()
 
