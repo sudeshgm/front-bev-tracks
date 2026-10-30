@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Download one A2D2 surround clip and pack it for Qwen-Drive + the eval UI.
 
-The sequence is the Munich sensor-fusion drive (20190401_121727). The window
-is a steady ~31 km/h stretch just after the car leaves the Königsplatz stop,
-so both objects and lane markings move through the ring.
-
-Images are CC BY-ND 4.0 (Audi). This script undistorts them for the pinhole
-head; it does not republish the dataset.
+Default scene is the Gaimersheim drive, a marked road at about 66 km/h.
+The Munich window is the cobblestone square and stays available as --scene munich.
 """
 
 from __future__ import annotations
@@ -28,18 +24,44 @@ from qdtrack.geometry import CAM_SLOTS, build_lidar2img, pack_calibration, scale
 from qdtrack.tracks import integrate_ego  # noqa: E402
 
 S3 = "https://audi-autonomous-driving-dataset.s3.eu-central-1.amazonaws.com"
-SCENE = "camera_lidar/20190401_121727"
-# Bus time origin and camera frame 100, both microseconds. Cameras run at 30 Hz.
-BUS0 = 1554115464699122
-FRAME100_TS = 1554115465612311
-# 280 s into the bus log: ~31 km/h, city street, frame ~8472.
-DEFAULT_START = 8472
+SCENES = {
+    "gaimersheim": {
+        "scene": "camera_lidar/20180810_150607",
+        "stamp": "20180810150607",
+        "city": "Gaimersheim",
+        "title": "Gaimersheim road",
+        "start": 12025,
+        "blurb": (
+            "About 66 km/h on a marked two-lane road: solid edge line, dashed lane line, "
+            "cars ahead. This replaces the Munich cobblestone square."
+        ),
+    },
+    "munich": {
+        "scene": "camera_lidar/20190401_121727",
+        "stamp": "20190401121727",
+        "city": "Munich",
+        "title": "Munich ring",
+        "start": 8472,
+        "blurb": (
+            "The head was trained on a fixed nuScenes 6-camera ring and an OpenScene 8-camera ring. "
+            "A2D2 is a different six-camera Audi rig."
+        ),
+    },
+}
 DEFAULT_COUNT = 20
 DEFAULT_STRIDE = 6  # 5 Hz
+CAM_DIR = {
+    "frontcenter": "cam_front_center",
+    "frontright": "cam_front_right",
+    "frontleft": "cam_front_left",
+    "sideright": "cam_side_right",
+    "sideleft": "cam_side_left",
+    "rearcenter": "cam_rear_center",
+}
 
 
-def frame_timestamp(frame_id: int) -> int:
-    return int(FRAME100_TS + (frame_id - 100) * (1_000_000 / 30))
+def frame_timestamp(frame_id: int, anchor_frame: int, anchor_ts: int) -> int:
+    return int(anchor_ts + (frame_id - anchor_frame) * (1_000_000 / 30))
 
 
 def download(url: str, dest: Path) -> None:
@@ -50,37 +72,46 @@ def download(url: str, dest: Path) -> None:
 
 
 def load_signal(bus_path: Path, name: str) -> tuple[str, np.ndarray]:
-    """Stream one pretty-printed signal out of the 180 MB bus file."""
-    import re
-
+    """Pull one signal out of a bus JSON, pretty-printed or compact."""
+    decoder = json.JSONDecoder()
     unit = ""
-    times = []
-    values = []
-    pending = None
-    inside = False
+    pairs: list[tuple[int, float]] = []
+    capturing = False
+    buf = ""
+    key = f'"{name}"'
     with bus_path.open() as handle:
-        for line in handle:
-            match = re.match(r'\s{4}"([^"]+)": \{', line)
-            if match:
-                if inside:
+        while True:
+            chunk = handle.read(1 << 20)
+            if not chunk and not buf:
+                break
+            buf += chunk
+            if not capturing:
+                at = buf.find(key)
+                if at < 0:
+                    buf = buf[-len(key) :]
+                    if not chunk:
+                        break
+                    continue
+                buf = buf[at + len(key) :]
+                capturing = True
+            start = buf.find("{")
+            if start < 0:
+                if not chunk:
                     break
-                inside = match.group(1) == name
                 continue
-            if not inside:
+            try:
+                obj, end = decoder.raw_decode(buf[start:])
+            except json.JSONDecodeError:
+                if not chunk:
+                    raise
                 continue
-            unit_match = re.search(r'"unit": "([^"]+)"', line)
-            if unit_match:
-                unit = unit_match.group(1)
-                continue
-            if re.match(r"\s+\d{13,},?\s*$", line):
-                pending = int(re.search(r"\d+", line).group())
-                continue
-            value_match = re.match(r"\s+(-?[0-9.eE+-]+),?\s*$", line)
-            if value_match and pending is not None:
-                times.append(pending)
-                values.append(float(value_match.group(1)))
-                pending = None
-    return unit, np.stack([np.asarray(times), np.asarray(values)], axis=1)
+            unit = str(obj.get("unit", ""))
+            for timestamp, value in obj["values"]:
+                pairs.append((int(timestamp), float(value)))
+            break
+    if not pairs:
+        raise SystemExit(f"bus signal {name} not found in {bus_path}")
+    return unit, np.asarray(pairs, dtype=np.float64)
 
 
 def interp(signal: np.ndarray, timestamp: int) -> float:
@@ -92,13 +123,23 @@ def interp(signal: np.ndarray, timestamp: int) -> float:
     return float(signal[index - 1, 1] * (1 - w) + signal[index, 1] * w)
 
 
-def ensure_bus(cache: Path) -> Path:
+def ensure_bus(cache: Path, scene: dict) -> Path:
     dest = cache / "bus.json"
     if not dest.exists():
-        url = f"{S3}/{SCENE}/bus_signals_20190401121727.json"
+        url = f"{S3}/{scene['scene']}/bus_signals_{scene['stamp']}.json"
         print(f"downloading bus signals ({url})", flush=True)
         download(url, dest)
     return dest
+
+
+def anchor_timestamp(cache: Path, scene: dict, frame_id: int) -> int:
+    dest = cache / f"anchor_{frame_id}.json"
+    url = (
+        f"{S3}/{scene['scene']}/camera/cam_front_center/"
+        f"{scene['stamp']}_camera_frontcenter_{frame_id:09d}.json"
+    )
+    download(url, dest)
+    return int(json.loads(dest.read_text())["cam_tstamp"])
 
 
 def ensure_config(cache: Path) -> dict:
@@ -108,22 +149,12 @@ def ensure_config(cache: Path) -> dict:
     return json.loads(dest.read_text())
 
 
-def fetch_images(frame_ids: list[int], cache: Path) -> None:
+def fetch_images(frame_ids: list[int], cache: Path, scene: dict) -> None:
     jobs = []
     for frame_id in frame_ids:
         for _qwen, _key, tag, _view in CAM_SLOTS:
-            name = f"20190401121727_camera_{tag}_{frame_id:09d}.png"
-            url = f"{S3}/{SCENE}/camera/cam_{tag if tag != 'frontcenter' else 'front_center'}/"
-            # directory names are not the file tags
-            dir_name = {
-                "frontcenter": "cam_front_center",
-                "frontright": "cam_front_right",
-                "frontleft": "cam_front_left",
-                "sideright": "cam_side_right",
-                "sideleft": "cam_side_left",
-                "rearcenter": "cam_rear_center",
-            }[tag]
-            url = f"{S3}/{SCENE}/camera/{dir_name}/{name}"
+            name = f"{scene['stamp']}_camera_{tag}_{frame_id:09d}.png"
+            url = f"{S3}/{scene['scene']}/camera/{CAM_DIR[tag]}/{name}"
             dest = cache / "raw" / f"{frame_id:09d}" / f"{tag}.png"
             jobs.append((url, dest))
     print(f"fetching {len(jobs)} images", flush=True)
@@ -139,7 +170,8 @@ def fetch_images(frame_ids: list[int], cache: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--start", type=int, default=DEFAULT_START)
+    parser.add_argument("--scene", choices=sorted(SCENES), default="gaimersheim")
+    parser.add_argument("--start", type=int, default=None)
     parser.add_argument("--count", type=int, default=DEFAULT_COUNT)
     parser.add_argument("--stride", type=int, default=DEFAULT_STRIDE)
     parser.add_argument("--cache", type=Path, default=Path("/tmp/a2d2-clip"))
@@ -147,10 +179,14 @@ def main() -> None:
     parser.add_argument("--pack-dir", type=Path, default=None, help="Write Qwen frame folders here")
     parser.add_argument("--display-width", type=int, default=960)
     args = parser.parse_args()
+    scene = SCENES[args.scene]
+    if args.start is None:
+        args.start = scene["start"]
 
     frame_ids = [args.start + i * args.stride for i in range(args.count)]
     config = ensure_config(args.cache)
-    bus = ensure_bus(args.cache)
+    bus = ensure_bus(args.cache, scene)
+    anchor_ts = anchor_timestamp(args.cache, scene, frame_ids[0])
     print("reading vehicle_speed and yaw rate", flush=True)
     speed_unit, speed = load_signal(bus, "vehicle_speed")
     yaw_unit, yaw_rate = load_signal(bus, "angular_velocity_omega_z")
@@ -159,14 +195,14 @@ def main() -> None:
 
     samples = []
     for frame_id in frame_ids:
-        ts = frame_timestamp(frame_id)
+        ts = frame_timestamp(frame_id, frame_ids[0], anchor_ts)
         kmh = interp(speed, ts)
         deg = interp(yaw_rate, ts)
         samples.append(
             {
                 "frame_id": frame_id,
                 "timestamp_us": ts,
-                "t": (ts - frame_timestamp(frame_ids[0])) / 1e6,
+                "t": (ts - anchor_ts) / 1e6,
                 "speed_mps": kmh / 3.6,
                 "yaw_rate": np.deg2rad(deg),
                 "speed_kmh": kmh,
@@ -182,16 +218,16 @@ def main() -> None:
         f"path {poses[-1]['x']:.1f} m",
         flush=True,
     )
-    fetch_images(frame_ids, args.cache)
+    fetch_images(frame_ids, args.cache, scene)
     calib = pack_calibration(config["cameras"])
 
     if args.ui_dir:
-        write_ui(args, frame_ids, samples, calib, config)
+        write_ui(args, samples, calib, config, scene)
     if args.pack_dir:
         write_pack(args, frame_ids, samples, calib, config)
     manifest = {
-        "sequence": "20190401_121727",
-        "city": "Munich",
+        "sequence": scene["scene"].split("/")[-1],
+        "city": scene["city"],
         "start_frame": args.start,
         "stride": args.stride,
         "hz": 30 / args.stride,
@@ -206,7 +242,7 @@ def main() -> None:
     print(f"wrote {out}", flush=True)
 
 
-def write_ui(args, frame_ids, samples, calib, config) -> None:
+def write_ui(args, samples, calib, config, scene: dict) -> None:
     ui = args.ui_dir
     ui.mkdir(parents=True, exist_ok=True)
     frames = []
@@ -250,18 +286,13 @@ def write_ui(args, frame_ids, samples, calib, config) -> None:
             }
         )
     clip = {
-        "title": "Munich ring",
-        "source": "A2D2 sensor fusion, sequence 20190401_121727",
-        "city": "Munich",
+        "title": scene["title"],
+        "source": f"A2D2 sensor fusion, sequence {scene['scene'].split('/')[-1]}",
+        "city": scene["city"],
         "license": "CC BY-ND 4.0, Audi Autonomous Driving Dataset",
         "model": "Qwen-Drive-1.0-4B perception",
         "dataset_type_slot": "nuscenes",
-        "why_not_nuscenes": (
-            "The head was trained on a fixed nuScenes 6-camera ring and an OpenScene 8-camera ring. "
-            "A2D2 is a different six-camera Audi rig: three forward cameras (one tele, two fisheye) "
-            "and side cameras near ±90°, not nuScenes' ±55° / ±110° layout. Images are undistorted "
-            "to the pinhole CamMatrix so the view transform sees a real projection."
-        ),
+        "why_not_nuscenes": scene["blurb"],
         "hz": 30 / args.stride,
         "slots": calib["slots"],
         "classes": [

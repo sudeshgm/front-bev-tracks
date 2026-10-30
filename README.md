@@ -10,9 +10,9 @@ on Audi A2D2 instead of pretending the rig matches.
 
 ## Clip
 
-- Dataset: [A2D2](https://www.a2d2.audi/) sensor-fusion sequence `20190401_121727` (Munich), CC BY-ND 4.0.
-- Window: camera frames `8472` to `8586` step 6 (20 frames, 5 Hz, about 4.8 s).
-- Motion: about 31 km/h, just after the car pulls away from the Königsplatz stop. Ego pose is integrated from bus `vehicle_speed` (km/h) and `angular_velocity_omega_z` (deg/s).
+- Dataset: [A2D2](https://www.a2d2.audi/) sensor-fusion sequence `20180810_150607` (Gaimersheim), CC BY-ND 4.0.
+- Window: camera frames `12025` to `12139` step 6 (20 frames, 5 Hz, about 3.8 s).
+- Motion: about 66 km/h on a marked two-lane road, solid edge line and dashed lane line. The earlier Munich window (`20190401_121727`, frame 8472) is cobblestone and is no longer the default.
 - Six cameras, undistorted to the pinhole `CamMatrix`, then labelled with the nuScenes view tags in this order: front center, front right, side right, rear center, side left, front left.
 
 The side cameras look near ±90°, and the two "front corner" cameras look almost straight ahead. Those slots are the closest nuScenes names, not a matched rig. Lidar frame is set equal to the vehicle frame (x forward, y left, z up) so Qwen's ego map grid lines up with the bus.
