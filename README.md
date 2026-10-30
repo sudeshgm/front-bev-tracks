@@ -11,7 +11,7 @@ on Audi A2D2 instead of pretending the rig matches.
 ## Clip
 
 - Dataset: [A2D2](https://www.a2d2.audi/) sensor-fusion sequence `20180810_150607` (Gaimersheim), CC BY-ND 4.0.
-- Window: camera frames `12025` to `12139` step 6 (20 frames, 5 Hz, about 3.8 s).
+- Window: camera frames `12025` through `12139`, every frame (30 Hz, 115 frames, about 3.8 s). The first pass used every 6th frame only so a free T4 would finish in a few minutes.
 - Motion: about 66 km/h on a marked two-lane road, solid edge line and dashed lane line. The earlier Munich window (`20190401_121727`, frame 8472) is cobblestone and is no longer the default.
 - Six cameras, undistorted to the pinhole `CamMatrix`, then labelled with the nuScenes view tags in this order: front center, front right, side right, rear center, side left, front left.
 

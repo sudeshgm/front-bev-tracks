@@ -44,10 +44,13 @@ print("patched deformable-attn fallback for fp16")
 PY
 export PYTHONPATH="${PWD}/third_party/Qwen-Drive-1.0/src:${PYTHONPATH:-}"
 
-# Pack the Gaimersheim road clip. Drop a previous Munich pack so both are not inferred.
-if [[ ! -d data/frames/f000012025/images ]]; then
+# Same Gaimersheim road window, every camera frame (30 Hz): 12025..12139.
+expected=115
+have=$(find data/frames -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+if [[ "$have" -ne "$expected" ]]; then
   rm -rf data/frames
-  python scripts/fetch_clip.py --scene gaimersheim --start 12025 --pack-dir data/frames --cache "${CACHE:-$PWD/data/cache}"
+  python scripts/fetch_clip.py --scene gaimersheim --start 12025 --stride 1 --count 115 \
+    --pack-dir data/frames --cache "${CACHE:-$PWD/data/cache}"
 fi
 
 python scripts/infer_and_track.py \
