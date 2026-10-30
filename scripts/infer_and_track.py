@@ -147,6 +147,33 @@ def _guard_voxel_pool() -> None:
     ops.voxel_pool_depth = guarded
 
 
+def _calib_to_fp32(metas: dict) -> None:
+    """The processor gives numpy calibration. Upstream point_sampling turns a
+    non-tensor lidar2img into a tensor of the *feature* dtype (fp16 on T4)
+    before its fp32 projection, rounding the intrinsics. Hand it fp32."""
+    import torch
+
+    for key in ("lidar2img", "lidar2ego"):
+        value = metas.get(key)
+        if isinstance(value, np.ndarray):
+            metas[key] = torch.from_numpy(np.ascontiguousarray(value, dtype=np.float32))
+        elif isinstance(value, torch.Tensor) and value.dtype != torch.float32:
+            metas[key] = value.float()
+
+
+def _fp32_box_decode(coder) -> None:
+    """Decode boxes from fp32 copies of the fp16 head outputs (topk, the
+    denormalize exp/atan2 and the range filter), not in fp16."""
+    import torch
+
+    decode_single = coder.decode_single
+
+    def decode_single_fp32(cls_scores, bbox_preds):
+        return decode_single(cls_scores.float(), bbox_preds.float())
+
+    coder.decode_single = decode_single_fp32
+
+
 def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str, perception_device: str = "auto"):
     import torch
     from transformers import AutoTokenizer
@@ -177,21 +204,29 @@ def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str, pe
     perc_device = _pick_perception_device(device, perception_device)
     head = head.to(perc_device).eval()
     vlm_mod = vlm_mod.to(device).eval()
-    if perc_device != device:
-        # infer() runs the VLM, then calls bev_modeling with features and
-        # img_metas tensors still on the VLM device. Move them across and run
-        # the BEV path with the perception GPU as the *current* device, so raw
-        # <<<>>> kernel launches and any default-device allocations land there.
-        bev_forward = head.bev_modeling.forward
+    # infer() runs the VLM, then calls bev_modeling with features and
+    # img_metas still on the VLM device. Make the calibration fp32 tensors,
+    # move everything to the perception device, and run the BEV path with that
+    # GPU as the *current* device so raw <<<>>> launches land there too.
+    bev_forward = head.bev_modeling.forward
+    perc_torch_device = torch.device(perc_device)
 
-        def _bev_on_perc(*args, **kwargs):
-            args = _move_inplace(tuple(args), perc_device)
-            kwargs = _move_inplace(dict(kwargs), perc_device)
-            with torch.cuda.device(torch.device(perc_device)):
-                return bev_forward(*args, **kwargs)
+    def _bev_on_perc(*args, **kwargs):
+        for metas in kwargs.get("img_metas", ()):
+            _calib_to_fp32(metas)
+        args = _move_inplace(tuple(args), perc_device)
+        kwargs = _move_inplace(dict(kwargs), perc_device)
+        if perc_torch_device.type != "cuda":
+            return bev_forward(*args, **kwargs)
+        with torch.cuda.device(perc_torch_device):
+            return bev_forward(*args, **kwargs)
 
-        head.bev_modeling.forward = _bev_on_perc
+    head.bev_modeling.forward = _bev_on_perc
     _guard_voxel_pool()
+    _fp32_box_decode(head.bev_modeling.head.bbox_coder)
+    from qdtrack import msda
+
+    msda.install()
     print(f"vlm on {device}, perception head on {perc_device}", flush=True)
     # attach() takes the inner VLM and the PerceptionProcessor, not a tokenizer.
     processor = PerceptionProcessor(tokenizer)

@@ -17,6 +17,7 @@ if [[ ! -d third_party/Qwen-Drive-1.0 ]]; then
 fi
 # The perception CUDA kernel is bf16-only and will not run on a T4.
 # On any other dtype, use the upstream PyTorch fallback instead of raising.
+# infer_and_track.py then routes that dispatch to qdtrack/msda.py (fp16-safe).
 python - <<'PY'
 from pathlib import Path
 p = Path("third_party/Qwen-Drive-1.0/src/qwen_drive_perception/attention.py")
@@ -33,6 +34,9 @@ new = '''    if value.dtype != torch.bfloat16:
             value, value_spatial_shapes, sampling_locations, attention_weights
         )
 '''
+if new in text:
+    print("deformable-attn fallback already patched")
+    raise SystemExit(0)
 if old not in text:
     raise SystemExit("attention.py dispatch changed; refusing to patch blindly")
 p.write_text(text.replace(old, new, 1))

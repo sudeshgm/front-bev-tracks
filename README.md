@@ -21,7 +21,7 @@ The side cameras look near ±90°, and the two "front corner" cameras look almos
 
 Kaggle T4, fp16, PyTorch SDPA. No FlashAttention. The perception CUDA kernel is bf16-only, so the job patches it to the upstream PyTorch fallback and loads `perception/` as a subfolder of `Qwen/Qwen-Drive-1.0-4B` (not as its own repo id).
 
-On T4 x2 the VLM stays on `cuda:0` and the perception head runs on `cuda:1` (`--perception-device`, default `auto`); one T4 cannot hold both through voxel pooling. The job sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. The BEV path runs with `cuda:1` as the current device, and `voxel_pool_depth` is wrapped with a device guard and index checks. `QD_PERCEPTION_DEVICE=cuda:0` forces one GPU; `QD_CUDA_DEBUG=1` sets `CUDA_LAUNCH_BLOCKING=1` and logs each voxel-pool call.
+On T4 x2 the VLM stays on `cuda:0` and the perception head runs on `cuda:1` (`--perception-device`, default `auto`); one T4 cannot hold both through voxel pooling. The job sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. The BEV path runs with `cuda:1` as the current device, and `voxel_pool_depth` is wrapped with a device guard and index checks. Deformable attention on fp16 goes through `qdtrack/msda.py` (fp32 grid math clamped to [-2, 2], fp16 sampling, fp32 accumulation, query-chunked), calibration is handed to the head as fp32 tensors, and boxes are decoded in fp32. `QD_PERCEPTION_DEVICE=cuda:0` forces one GPU; `QD_CUDA_DEBUG=1` sets `CUDA_LAUNCH_BLOCKING=1` and logs each voxel-pool call.
 
 Run `main`. Do not check out `243b9a2` — that commit is the one that failed on the hub id.
 
