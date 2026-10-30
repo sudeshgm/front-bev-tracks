@@ -39,6 +39,18 @@ The job downloads the weights and the Audi frames, writes `results/<token>.npz`,
 - `object_tracks` — every detection class, kept across frames (nearest-first constant-velocity, class-gated, miss gap of 3 frames)
 - `lane_tracks` — `road_line` and `road_edge` polylines associated in the odometry frame (chamfer gate)
 
+## Later: domain-shift stack
+
+Not this run. After Qwen writes `results/eval.json`, the same clip and the same `eval.json` schema get a second pass that does not use a nuScenes bird's-eye-view grid.
+
+Undistort to the pinhole, then per camera:
+
+- depth: UniDepth or Metric3D v2, using these intrinsics
+- objects: YOLO-World
+- lanes: YOLOPv2
+
+Lift pixels into the ego frame with the extrinsics and the metric depth. Reuse the existing object and lane tracker. SparseDrive and MapTR stay off the list. They freeze the nuScenes rig.
+
 ## CPU checks
 
 ```bash

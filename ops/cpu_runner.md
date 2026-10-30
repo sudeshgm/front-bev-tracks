@@ -27,3 +27,7 @@ cd /kaggle/working && tar czf qwen_a2d2_results.tgz results gpu_job.log run_meta
 ```
 
 Constraints: fp16, SDPA, no FlashAttention, do not pip-install torch. `transformers` must stay `5.14.1`. Keep `commit.txt` on one line.
+
+## Later, do not start yet
+
+After `results/eval.json` exists, and only then: a second pass on the same frames. UniDepth or Metric3D v2 for metric depth, YOLO-World for objects, YOLOPv2 for lanes, lifted with this clip's calibration into the same `eval.json` schema. No SparseDrive, no MapTR. The Qwen job stays the one in progress.
