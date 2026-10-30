@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 python -m pip install -q -r requirements-gpu.txt
+python -c "import torch, transformers; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'transformers', transformers.__version__, flush=True)"
 
 if [[ ! -d third_party/Qwen-Drive-1.0 ]]; then
   git clone --depth 1 https://github.com/QwenLM/Qwen-Drive-1.0 third_party/Qwen-Drive-1.0

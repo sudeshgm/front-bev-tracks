@@ -1,8 +1,10 @@
+# Qwen-Drive-1.0 pins transformers 5.14.1. Older 4.x builds have no qwen3_5
+# and die in AutoConfig.for_model. Do not install torch here: Kaggle's CUDA
+# wheel must stay. Do not install flash-attn; T4 uses SDPA.
+transformers==5.14.1
+accelerate==1.12.0
+safetensors==0.8.0
 numpy>=1.26
 opencv-python-headless>=4.9
-torch
-transformers>=4.51,<5
-accelerate
-safetensors
-pillow
-huggingface_hub
+pillow>=10,<13
+huggingface_hub>=0.34
