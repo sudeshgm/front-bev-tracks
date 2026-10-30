@@ -33,6 +33,35 @@ def _to_numpy(value):
     return np.asarray(value)
 
 
+def _materialize(vlm: str, perception: str) -> tuple[str, str]:
+    """Local directories for the VLM root and the perception head.
+
+    A hub id cannot contain a subfolder. ``Qwen/Qwen-Drive-1.0-4B/perception``
+    is rejected by huggingface_hub, which is what killed the first T4 run.
+    Download the release (skipping the unused planners) and load from disk.
+    A local directory pair is used as-is.
+    """
+    vlm_path, perc_path = Path(vlm), Path(perception)
+    if vlm_path.is_dir() and perc_path.is_dir():
+        return str(vlm_path), str(perc_path)
+    from huggingface_hub import snapshot_download
+
+    sub = "perception"
+    prefix = vlm.rstrip("/") + "/"
+    if perception.startswith(prefix):
+        sub = perception[len(prefix):]
+    root = Path(
+        snapshot_download(
+            vlm,
+            ignore_patterns=["planner-sft/*", "planner-rl/*"],
+        )
+    )
+    head = root / sub
+    if not head.is_dir():
+        raise SystemExit(f"perception weights not found at {head}")
+    return str(root), str(head)
+
+
 def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str):
     import torch
     from transformers import AutoTokenizer
@@ -41,23 +70,30 @@ def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str):
     # The perception package imports the VLM. Both live in the cloned repo.
     from qwen_drive_perception.dataset import PerceptionFrame, PerceptionProcessor
     from qwen_drive_perception.modeling_perception import QwenDrivePerception
-
-    tokenizer = AutoTokenizer.from_pretrained(vlm, trust_remote_code=True)
-    head = QwenDrivePerception.from_pretrained(perception, torch_dtype=torch_dtype)
-    # attach() binds the VLM. The public API takes the loaded VLM module.
     from qwen_drive import QwenDriveForPlanning
 
-    vlm_model = QwenDriveForPlanning.from_pretrained(
-        vlm,
+    vlm_dir, head_dir = _materialize(vlm, perception)
+    tokenizer = AutoTokenizer.from_pretrained(vlm_dir, trust_remote_code=True)
+    # dtype= (not torch_dtype=). Drop the planning expert: it is unused and
+    # does not fit beside the 4B VLM on a 16 GB T4.
+    holder = QwenDriveForPlanning.from_pretrained(
+        vlm_dir,
         dtype=torch_dtype,
         attn_implementation=attn,
         trust_remote_code=True,
     )
+    vlm_mod = holder.vlm
+    if hasattr(holder, "planning_expert"):
+        del holder.planning_expert
+    del holder
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    head = QwenDrivePerception.from_pretrained(head_dir, dtype=torch_dtype)
     head = head.to(device).eval()
-    vlm_model = vlm_model.to(device).eval()
-    # attach() wants the inner VLM module, not the planning wrapper.
-    head.attach(vlm_model.vlm, tokenizer)
+    vlm_mod = vlm_mod.to(device).eval()
+    # attach() takes the inner VLM and the PerceptionProcessor, not a tokenizer.
     processor = PerceptionProcessor(tokenizer)
+    head.attach(vlm_mod, processor)
     return head, processor, PerceptionFrame
 
 

@@ -19,7 +19,9 @@ The side cameras look near ±90°, and the two "front corner" cameras look almos
 
 ## GPU runner
 
-Kaggle T4, fp16, PyTorch SDPA. No FlashAttention, no bf16.
+Kaggle T4, fp16, PyTorch SDPA. No FlashAttention. The perception CUDA kernel is bf16-only, so the job patches it to the upstream PyTorch fallback and loads `perception/` as a subfolder of `Qwen/Qwen-Drive-1.0-4B` (not as its own repo id).
+
+Run `main`. Do not check out `243b9a2` — that commit is the one that failed on the hub id.
 
 ```bash
 git clone https://github.com/sudeshgm/qwen-drive-a2d2
