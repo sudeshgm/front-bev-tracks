@@ -1,0 +1,6 @@
+__pycache__/
+data/cache/
+data/frames/
+third_party/
+results/*.npz
+*.png

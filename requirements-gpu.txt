@@ -1,0 +1,8 @@
+numpy>=1.26
+opencv-python-headless>=4.9
+torch
+transformers>=4.51,<5
+accelerate
+safetensors
+pillow
+huggingface_hub

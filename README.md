@@ -1,0 +1,44 @@
+# Qwen-Drive on one A2D2 clip
+
+Object tracks and lane tracks from `Qwen/Qwen-Drive-1.0-4B` perception, on a
+surround video that is **not** nuScenes.
+
+The released head was trained on a fixed nuScenes 6-camera ring and an
+OpenScene/nuPlan 8-camera ring, at 896×512. The authors say a different camera
+layout is not covered and will likely degrade. This repo runs that experiment
+on Audi A2D2 instead of pretending the rig matches.
+
+## Clip
+
+- Dataset: [A2D2](https://www.a2d2.audi/) sensor-fusion sequence `20190401_121727` (Munich), CC BY-ND 4.0.
+- Window: camera frames `8472` to `8586` step 6 (20 frames, 5 Hz, about 4.8 s).
+- Motion: about 31 km/h, just after the car pulls away from the Königsplatz stop. Ego pose is integrated from bus `vehicle_speed` (km/h) and `angular_velocity_omega_z` (deg/s).
+- Six cameras, undistorted to the pinhole `CamMatrix`, then labelled with the nuScenes view tags in this order: front center, front right, side right, rear center, side left, front left.
+
+The side cameras look near ±90°, and the two "front corner" cameras look almost straight ahead. Those slots are the closest nuScenes names, not a matched rig. Lidar frame is set equal to the vehicle frame (x forward, y left, z up) so Qwen's ego map grid lines up with the bus.
+
+## GPU runner
+
+Kaggle T4, fp16, PyTorch SDPA. No FlashAttention, no bf16.
+
+```bash
+git clone https://github.com/sudeshgm/qwen-drive-a2d2
+cd qwen-drive-a2d2
+bash scripts/gpu_job.sh
+```
+
+The job downloads the weights and the Audi frames, writes `results/<token>.npz`, and `results/eval.json`. Load that JSON in the evaluation UI.
+
+`eval.json` has:
+
+- `frames[].detections` — per-frame boxes `[x, y, z, w, l, h, yaw, vx, vy]` in the ego frame, score floor 0.2
+- `object_tracks` — every detection class, kept across frames (nearest-first constant-velocity, class-gated, miss gap of 3 frames)
+- `lane_tracks` — `road_line` and `road_edge` polylines associated in the odometry frame (chamfer gate)
+
+## CPU checks
+
+```bash
+python scripts/test_tracks.py
+```
+
+Needs the A2D2 calibration JSON at `/tmp/a2d2/cams_lidars.json` for the projection test (or skip that one). No GPU.
