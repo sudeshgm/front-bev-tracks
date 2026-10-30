@@ -62,7 +62,39 @@ def _materialize(vlm: str, perception: str) -> tuple[str, str]:
     return str(root), str(head)
 
 
-def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str):
+def _move_inplace(obj, device):
+    """Move tensors to ``device``; dicts/lists are updated in place so callers
+    that later read the same ``img_metas`` see consistent objects."""
+    import torch
+
+    if isinstance(obj, torch.Tensor):
+        return obj.to(device)
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            obj[key] = _move_inplace(value, device)
+        return obj
+    if isinstance(obj, list):
+        for i, value in enumerate(obj):
+            obj[i] = _move_inplace(value, device)
+        return obj
+    if isinstance(obj, tuple):
+        return tuple(_move_inplace(v, device) for v in obj)
+    return obj
+
+
+def _pick_perception_device(device: str, requested: str) -> str:
+    """The 4B VLM fills most of a 16 GB T4 and voxel pooling then OOMs on the
+    same card. With two GPUs (Kaggle T4 x2) run the BEV head on the second."""
+    if requested != "auto":
+        return requested
+    import torch
+
+    if device.startswith("cuda") and torch.cuda.is_available() and torch.cuda.device_count() >= 2:
+        return "cuda:1"
+    return device
+
+
+def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str, perception_device: str = "auto"):
     import torch
     from transformers import AutoTokenizer
 
@@ -89,12 +121,28 @@ def load_model(vlm: str, perception: str, device: str, dtype: str, attn: str):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     head = QwenDrivePerception.from_pretrained(head_dir, dtype=torch_dtype)
-    head = head.to(device).eval()
+    perc_device = _pick_perception_device(device, perception_device)
+    head = head.to(perc_device).eval()
     vlm_mod = vlm_mod.to(device).eval()
+    if perc_device != device:
+        # infer() runs the VLM, then calls bev_modeling with features and
+        # img_metas tensors still on the VLM device. Move them across.
+        def _to_perc(module, args, kwargs):
+            return _move_inplace(tuple(args), perc_device), _move_inplace(dict(kwargs), perc_device)
+
+        head.bev_modeling.register_forward_pre_hook(_to_perc, with_kwargs=True)
+    print(f"vlm on {device}, perception head on {perc_device}", flush=True)
     # attach() takes the inner VLM and the PerceptionProcessor, not a tokenizer.
     processor = PerceptionProcessor(tokenizer)
     head.attach(vlm_mod, processor)
     return head, processor, PerceptionFrame
+
+
+def _empty_cache() -> None:
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def main() -> None:
@@ -106,10 +154,13 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", default="float16", choices=["float16", "bfloat16", "float32"])
     parser.add_argument("--attn", default="sdpa")
+    parser.add_argument("--perception-device", default="auto", help="auto: cuda:1 when two GPUs exist")
     parser.add_argument("--score", type=float, default=0.2)
     args = parser.parse_args()
 
-    head, processor, PerceptionFrame = load_model(args.vlm, args.perception, args.device, args.dtype, args.attn)
+    head, processor, PerceptionFrame = load_model(
+        args.vlm, args.perception, args.device, args.dtype, args.attn, args.perception_device
+    )
     args.output.mkdir(parents=True, exist_ok=True)
     folders = sorted(p for p in args.frames.iterdir() if (p / "frame.json").exists())
     if not folders:
@@ -120,6 +171,7 @@ def main() -> None:
         frame = PerceptionFrame(folder)
         inputs, img_metas = processor(frame, device=args.device)
         result = head.infer(inputs, img_metas)
+        del inputs
         boxes = _to_numpy(result["boxes"]).reshape(-1, 9)
         scores = _to_numpy(result["scores"]).reshape(-1)
         labels = _to_numpy(result["labels"]).reshape(-1).astype(np.int64)
@@ -142,6 +194,8 @@ def main() -> None:
             }
         )
         kept = int((scores >= args.score).sum()) if len(scores) else 0
+        del result
+        _empty_cache()
         print(f"{frame.token}: {len(scores)} boxes, {kept} over {args.score}, map {seg.shape}", flush=True)
 
     objects = track_objects(packed, score_min=args.score)

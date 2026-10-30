@@ -2,6 +2,8 @@
 # Qwen-Drive perception + object/lane tracking on one A2D2 clip.
 # GPU runner: Kaggle T4, fp16, SDPA (no flash-attn, no bf16). Internet on for HF weights.
 set -euo pipefail
+# Less fragmentation: voxel pooling asks for one ~3.7 GiB block.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 cd "$(dirname "$0")/.."
 
 python -m pip install -q -r requirements-gpu.txt

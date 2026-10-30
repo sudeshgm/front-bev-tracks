@@ -21,6 +21,8 @@ The side cameras look near ±90°, and the two "front corner" cameras look almos
 
 Kaggle T4, fp16, PyTorch SDPA. No FlashAttention. The perception CUDA kernel is bf16-only, so the job patches it to the upstream PyTorch fallback and loads `perception/` as a subfolder of `Qwen/Qwen-Drive-1.0-4B` (not as its own repo id).
 
+On T4 x2 the VLM stays on `cuda:0` and the perception head runs on `cuda:1` (`--perception-device`, default `auto`); one T4 cannot hold both through voxel pooling. The job sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+
 Run `main`. Do not check out `243b9a2` — that commit is the one that failed on the hub id.
 
 ```bash
