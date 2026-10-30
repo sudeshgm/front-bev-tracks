@@ -13,7 +13,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from qdtrack.geometry import build_lidar2img, sensor_to_ego  # noqa: E402
-from qdtrack.tracks import ego_to_world, integrate_ego, polylines_from_map, track_lanes, track_objects, world_to_ego  # noqa: E402
+from qdtrack.tracks import (  # noqa: E402
+    ego_to_world,
+    integrate_ego,
+    merge_object_tracks,
+    polylines_from_map,
+    track_lanes,
+    track_objects,
+    world_to_ego,
+)
 
 
 def test_front_camera_sees_the_road():
@@ -119,10 +127,29 @@ def test_map_raster_becomes_a_line():
     assert span > 20
 
 
+def test_split_vehicle_ids_join():
+    def track(tid, samples):
+        return {"id": tid, "name": "vehicle", "label": 0, "hits": len(samples), "samples": samples}
+
+    def sample(token, x, y, score=0.9):
+        return {"token": token, "score": score, "box": [0, 0, 0, 4, 2, 1.5, 0, 0, 0], "world": [x, y]}
+
+    same_a = track(1, [sample("a", 10, 7), sample("b", 12, 7), sample("c", 14, 7.2)])
+    same_b = track(2, [sample("b", 12.4, 7.4), sample("c", 14.3, 7.1), sample("d", 16, 7)])
+    other = track(3, [sample("b", 12, 11), sample("c", 14, 11), sample("d", 16, 11)])
+    times = {"a": 0.0, "b": 0.2, "c": 0.4, "d": 0.6}
+    merged = merge_object_tracks([same_a, same_b, other], times)
+    assert len(merged) == 2, [(t["id"], t["hits"]) for t in merged]
+    hits = sorted(t["hits"] for t in merged)
+    assert hits == [3, 4]
+
+
 if __name__ == "__main__":
     test_front_camera_sees_the_road()
     test_ego_roundtrip_and_integration()
     test_object_ids_survive_a_gap()
     test_lane_association()
+    test_parallel_copies_collapse()
     test_map_raster_becomes_a_line()
+    test_split_vehicle_ids_join()
     print("ok")

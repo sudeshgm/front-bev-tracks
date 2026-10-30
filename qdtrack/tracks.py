@@ -519,3 +519,105 @@ def _collapse_lanes(tracks: list[dict]) -> list[dict]:
             }
         )
     return collapsed
+
+
+def merge_object_tracks(tracks: list[dict], token_time: dict[str, float]) -> list[dict]:
+    """Join tracks that are the same object seen twice.
+
+    Two tracks merge when they occupy the same place at the same time
+    (median under 2.2 m on at least two shared frames), or when one ends
+    and the other starts within 0.4 s and 2.5 m. Adjacent-lane cars stay
+    apart: a lane is about 3.5 m wide.
+    """
+    parent = list(range(len(tracks)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def link(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    series = []
+    for track in tracks:
+        points = []
+        for sample in track["samples"]:
+            t = token_time.get(sample["token"])
+            if t is None:
+                continue
+            points.append((float(t), sample))
+        points.sort(key=lambda item: item[0])
+        series.append(points)
+
+    for i, left in enumerate(tracks):
+        if not series[i]:
+            continue
+        left_by = {sample["token"]: (t, sample) for t, sample in series[i]}
+        for j in range(i + 1, len(tracks)):
+            right = tracks[j]
+            if left["name"] != right["name"] or not series[j]:
+                continue
+            y_left = float(np.median([sample["world"][1] for _t, sample in series[i]]))
+            y_right = float(np.median([sample["world"][1] for _t, sample in series[j]]))
+            # A lane is about 3.5 m. Tracks in different lanes are not the same car,
+            # even when one bad frame puts a box on top of the other.
+            if abs(y_left - y_right) > 2.0:
+                continue
+            distances = []
+            for t, sample in series[j]:
+                other = left_by.get(sample["token"])
+                if other is None:
+                    continue
+                a = other[1]["world"]
+                b = sample["world"]
+                distances.append(float(np.hypot(a[0] - b[0], a[1] - b[1])))
+            if len(distances) >= 2 and float(np.median(distances)) <= 2.2:
+                link(i, j)
+                continue
+            end_i, start_j = series[i][-1], series[j][0]
+            end_j, start_i = series[j][-1], series[i][0]
+            joins = (
+                (start_j[0] - end_i[0], end_i[1]["world"], start_j[1]["world"]),
+                (start_i[0] - end_j[0], end_j[1]["world"], start_i[1]["world"]),
+            )
+            for gap, a, b in joins:
+                if 0 <= gap <= 0.4 and float(np.hypot(a[0] - b[0], a[1] - b[1])) <= 2.5:
+                    link(i, j)
+                    break
+
+    groups: dict[int, list[int]] = {}
+    for i in range(len(tracks)):
+        groups.setdefault(find(i), []).append(i)
+
+    merged = []
+    for indexes in groups.values():
+        by_token: dict[str, tuple[float, dict]] = {}
+        names = tracks[indexes[0]]
+        for index in indexes:
+            for t, sample in series[index]:
+                current = by_token.get(sample["token"])
+                if current is None or sample["score"] > current[1]["score"]:
+                    by_token[sample["token"]] = (t, sample)
+        samples = [sample for _t, sample in sorted(by_token.values(), key=lambda item: item[0])]
+        if samples:
+            centre_y = float(np.median([sample["world"][1] for sample in samples]))
+            samples = [sample for sample in samples if abs(sample["world"][1] - centre_y) <= 3.0]
+        if not samples:
+            continue
+        merged.append(
+            {
+                "id": len(merged) + 1,
+                "name": names["name"],
+                "label": names["label"],
+                "hits": len(samples),
+                "samples": samples,
+            }
+        )
+    merged.sort(key=lambda track: (track["name"], track["samples"][0]["world"][0] if track["samples"] else 0))
+    for index, track in enumerate(merged, start=1):
+        track["id"] = index
+    return merged
