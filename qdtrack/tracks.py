@@ -365,7 +365,7 @@ def _chamfer(a: np.ndarray, b: np.ndarray) -> float:
     return float(0.5 * (d.min(axis=1).mean() + d.min(axis=0).mean()))
 
 
-def track_lanes(frames: list[dict], gate: float = 1.6) -> list[dict]:
+def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2, collapse: bool = True) -> list[dict]:
     """Associate per-frame lane polylines (ego XY) into world tracks.
 
     frames need pose and maps[name] = list of (N, 2) ego polylines.
@@ -381,7 +381,7 @@ def track_lanes(frames: list[dict], gate: float = 1.6) -> list[dict]:
                 best = None
                 best_dist = gate
                 for track in tracks:
-                    if track["name"] != name or index - track["last_index"] > 2:
+                    if track["name"] != name or index - track["last_index"] > max_gap:
                         continue
                     dist = _chamfer(world, track["world"])
                     if dist < best_dist:
@@ -430,6 +430,8 @@ def track_lanes(frames: list[dict], gate: float = 1.6) -> list[dict]:
                 "samples": track["samples"],
             }
         )
+    if not collapse:
+        return published
     return _collapse_lanes(published)
 
 
