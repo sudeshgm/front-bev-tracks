@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT))
 from qdtrack.geometry import CAM_SLOTS, pixel_to_ego  # noqa: E402
 from qdtrack.tracks import DET_CLASS_NAMES, track_lanes, track_objects  # noqa: E402
 
-AGREE = 0.30
+AGREE = 0.40
 VEHICLE = DET_CLASS_NAMES.index("vehicle")
 
 
@@ -174,19 +174,57 @@ def ground_depth(u: float, v: float, intrinsic, rotation, translation):
     return depth
 
 
-def agreed(u, v, depth_map, intrinsic, rotation, translation):
-    plane = ground_depth(u, v, intrinsic, rotation, translation)
-    measured = sample_depth(depth_map, u, v)
-    if plane is None or measured < 0:
+def plane_point(u, v, intrinsic, rotation, translation):
+    """Where this pixel's ray meets the ground, or None if it does not."""
+    depth = ground_depth(u, v, intrinsic, rotation, translation)
+    if depth is None:
         return None
-    if abs(measured - plane) / plane > AGREE:
+    ego = pixel_to_ego(u, v, depth, intrinsic, rotation, translation)
+    if ego is None or abs(float(ego[2])) > 0.5:
         return None
-    ego = pixel_to_ego(u, v, measured, intrinsic, rotation, translation)
-    if ego is None or abs(float(ego[2])) > 1.0:
-        return None
-    if not (2.0 < float(ego[0]) < 40.0 and -15.0 < float(ego[1]) < 15.0):
+    if not (2.0 < float(ego[0]) < 45.0 and -16.0 < float(ego[1]) < 16.0):
         return None
     return ego
+
+
+def fit_scale(pixels, depth_map, intrinsic, rotation, translation) -> tuple[float, int]:
+    """One scale so UniDepth matches the ground plane on the reliable band.
+
+    The raw metric depth was off by more than 30% on 99% of this clip, which
+    is a scale bias, not a per-pixel failure. The band is 8 to 22 m, where one
+    pixel of calibration error is still under half a metre.
+    """
+    ratios = []
+    for u, v in pixels:
+        plane = ground_depth(u, v, intrinsic, rotation, translation)
+        measured = sample_depth(depth_map, u, v)
+        if plane is None or measured < 0 or not (8.0 <= plane <= 22.0):
+            continue
+        ratios.append(plane / measured)
+    if len(ratios) < 30:
+        return 1.0, len(ratios)
+    scale = float(np.median(ratios))
+    return float(np.clip(scale, 0.4, 2.5)), len(ratios)
+
+
+def kept_point(u, v, depth_map, scale, intrinsic, rotation, translation):
+    """Near points use the ground plane. Far points use scaled depth if it agrees."""
+    plane = ground_depth(u, v, intrinsic, rotation, translation)
+    on_plane = plane_point(u, v, intrinsic, rotation, translation)
+    if on_plane is not None and float(on_plane[0]) <= 22.0:
+        return on_plane, "plane"
+    measured = sample_depth(depth_map, u, v)
+    if plane is None or measured < 0:
+        return None, ""
+    scaled = measured * scale
+    if abs(scaled - plane) / plane > 0.40:
+        return None, ""
+    ego = pixel_to_ego(u, v, scaled, intrinsic, rotation, translation)
+    if ego is None or abs(float(ego[2])) > 1.2:
+        return None, ""
+    if not (2.0 < float(ego[0]) < 40.0 and -15.0 < float(ego[1]) < 15.0):
+        return None, ""
+    return ego, "depth"
 
 
 def centerlines(mask: np.ndarray):
@@ -205,14 +243,14 @@ def centerlines(mask: np.ndarray):
     return lines
 
 
-def fuse_line(pixels, depth_map, intrinsic, rotation, translation, stats: dict) -> np.ndarray:
+def fuse_line(pixels, depth_map, scale, intrinsic, rotation, translation, stats: dict) -> np.ndarray:
     kept = []
     for u, v in pixels:
         stats["lane_seen"] += 1
-        ego = agreed(u, v, depth_map, intrinsic, rotation, translation)
+        ego, source = kept_point(u, v, depth_map, scale, intrinsic, rotation, translation)
         if ego is None:
             continue
-        stats["lane_kept"] += 1
+        stats["lane_" + source] += 1
         kept.append(ego[:2])
     if len(kept) < 4:
         return np.zeros((0, 2), dtype=np.float64)
@@ -222,15 +260,16 @@ def fuse_line(pixels, depth_map, intrinsic, rotation, translation, stats: dict) 
     return poly
 
 
-def fuse_box(x1, y1, x2, y2, score, depth_map, intrinsic, rotation, translation, stats: dict):
+def fuse_box(x1, y1, x2, y2, score, depth_map, scale, intrinsic, rotation, translation, stats: dict):
     stats["box_seen"] += 1
     bottom = max(y1, y2)
     left_x, right_x = min(x1, x2), max(x1, x2)
-    center = agreed((left_x + right_x) / 2, bottom, depth_map, intrinsic, rotation, translation)
+    center, source = kept_point((left_x + right_x) / 2, bottom, depth_map, scale, intrinsic, rotation, translation)
     if center is None:
         return None
-    left = agreed(left_x, bottom, depth_map, intrinsic, rotation, translation)
-    right = agreed(right_x, bottom, depth_map, intrinsic, rotation, translation)
+    stats["box_" + source] += 1
+    left, _ = kept_point(left_x, bottom, depth_map, scale, intrinsic, rotation, translation)
+    right, _ = kept_point(right_x, bottom, depth_map, scale, intrinsic, rotation, translation)
     if left is not None and right is not None:
         edge = float(np.linalg.norm(right[:2] - left[:2]))
     else:
@@ -257,7 +296,6 @@ def fuse_box(x1, y1, x2, y2, score, depth_map, intrinsic, rotation, translation,
         return None
     if not (2.0 < cx < 45.0 and -14.0 < cy < 14.0):
         return None
-    stats["box_kept"] += 1
     return [cx, cy, height / 2, width, length, height, yaw, 0.0, 0.0], score
 
 
@@ -280,7 +318,8 @@ def main():
     if not folders:
         raise SystemExit(f"no frames in {args.frames}")
     packed = []
-    stats = {"lane_seen": 0, "lane_kept": 0, "box_seen": 0, "box_kept": 0}
+    stats = {"lane_seen": 0, "lane_plane": 0, "lane_depth": 0, "box_seen": 0, "box_plane": 0, "box_depth": 0}
+    scales = []
     for folder in folders:
         meta = json.loads((folder / "frame.json").read_text())
         calib = np.load(folder / "calib.npz")
@@ -292,14 +331,17 @@ def main():
         translation = calib["sensor2lidar_translation"][front].astype(np.float64)
         depth = depth_of(depth_model, pinhole_cls, image, intrinsic, device)
         mask, boxes = yolop_forward(lanes_model, image, device)
+        pixels = [point for line in centerlines(mask) for point in line]
+        scale, used = fit_scale(pixels, depth, intrinsic, rotation, translation)
+        scales.append(scale)
         lines = []
-        for pixels in centerlines(mask):
-            poly = fuse_line(pixels, depth, intrinsic, rotation, translation, stats)
+        for line in centerlines(mask):
+            poly = fuse_line(line, depth, scale, intrinsic, rotation, translation, stats)
             if len(poly):
                 lines.append(poly)
         frame_boxes, frame_scores, frame_labels = [], [], []
         for x1, y1, x2, y2, score in boxes:
-            fused = fuse_box(x1, y1, x2, y2, score, depth, intrinsic, rotation, translation, stats)
+            fused = fuse_box(x1, y1, x2, y2, score, depth, scale, intrinsic, rotation, translation, stats)
             if fused is None:
                 continue
             box, kept_score = fused
@@ -318,7 +360,7 @@ def main():
             }
         )
         print(
-            f"{meta['token']}: {len(frame_scores)} boxes, {len(lines)} lines",
+            f"{meta['token']}: scale {scale:.2f} ({used})  {len(frame_scores)} boxes, {len(lines)} lines",
             flush=True,
         )
 
@@ -327,7 +369,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     document = {
         "model": "yolopv2 + unidepth-v2-vits14",
-        "perception": "front camera, kept where UniDepth agrees with the ground plane within 30%",
+        "perception": "front camera; near points from the ground plane, far points from UniDepth after a per-frame scale",
         "dtype": "float32",
         "attn": "n/a",
         "score_min": args.score,
@@ -353,8 +395,9 @@ def main():
     }
     dest = args.output / "eval.json"
     dest.write_text(json.dumps(document))
-    lane_rate = stats["lane_kept"] / max(stats["lane_seen"], 1)
-    box_rate = stats["box_kept"] / max(stats["box_seen"], 1)
+    lane_kept = stats["lane_plane"] + stats["lane_depth"]
+    box_kept = stats["box_plane"] + stats["box_depth"]
+    median_scale = float(np.median(scales)) if scales else 1.0
     summary = args.output / "summary.md"
     summary.write_text(
         "\n".join(
@@ -362,19 +405,26 @@ def main():
                 "# Depth agreement on A2D2",
                 "",
                 "- YOLOPv2 lanes and boxes, front camera only",
-                "- UniDepth V2 metric depth, kept when it matches the ground plane within 30%",
-                "- then tracked in the ego frame",
+                "- per-frame scale fit on lane pixels from 8 m to 22 m",
+                "- points inside 22 m come from the ground plane",
+                "- points past 22 m come from scaled UniDepth, and only if it is within 40% of the plane",
+                "- then tracked",
                 f"- frames: {len(packed)}",
                 f"- object tracks: {len(objects)}",
                 f"- lane tracks: {len(lanes)}",
-                f"- lane points kept: {stats['lane_kept']} / {stats['lane_seen']} ({lane_rate:.0%})",
-                f"- boxes kept: {stats['box_kept']} / {stats['box_seen']} ({box_rate:.0%})",
+                f"- median depth scale: {median_scale:.2f}",
+                f"- lane points from the plane: {stats['lane_plane']} / {stats['lane_seen']}",
+                f"- lane points from depth: {stats['lane_depth']} / {stats['lane_seen']}",
+                f"- boxes from the plane: {stats['box_plane']} / {stats['box_seen']}",
+                f"- boxes from depth: {stats['box_depth']} / {stats['box_seen']}",
+                f"- lane points kept: {lane_kept} / {stats['lane_seen']}",
+                f"- boxes kept: {box_kept} / {stats['box_seen']}",
                 "",
             ]
         )
     )
     print(
-        f"kept lanes {stats['lane_kept']}/{stats['lane_seen']}  boxes {stats['box_kept']}/{stats['box_seen']}",
+        f"scale {median_scale:.2f}  lanes {lane_kept}/{stats['lane_seen']}  boxes {box_kept}/{stats['box_seen']}",
         flush=True,
     )
     print(f"wrote {dest}", flush=True)
