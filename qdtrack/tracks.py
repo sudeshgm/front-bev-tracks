@@ -116,7 +116,7 @@ def _as_detections(frame: dict, score_min: float) -> list[dict]:
     return out
 
 
-def track_objects(frames: list[dict], score_min: float = 0.25) -> list[dict]:
+def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3) -> list[dict]:
     """Nearest-first constant-velocity tracker. frames carry pose + boxes in ego.
 
     box is [x, y, z, w, l, h, yaw, vx, vy] in the ego frame (lidar == ego).
@@ -134,7 +134,7 @@ def track_objects(frames: list[dict], score_min: float = 0.25) -> list[dict]:
             predictions.append((track["world"] + track["vel_world"] * dt, dt))
         candidates = []
         for track_index, track in enumerate(tracks):
-            if index - track["last_index"] > 3:
+            if index - track["last_index"] > max_gap:
                 continue
             predicted, _dt = predictions[track_index]
             gate = _GATE.get(track["name"], 3.0)

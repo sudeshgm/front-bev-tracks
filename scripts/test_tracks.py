@@ -12,7 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from qdtrack.geometry import build_lidar2img, sensor_to_ego  # noqa: E402
+from qdtrack.geometry import build_lidar2img, pixel_to_ego, sensor_to_ego  # noqa: E402
 from qdtrack.tracks import (  # noqa: E402
     ego_to_world,
     integrate_ego,
@@ -144,6 +144,12 @@ def test_split_vehicle_ids_join():
     assert hits == [3, 4]
 
 
+def test_pixel_lifts_through_the_camera_centre():
+    intrinsic = np.array([[100.0, 0, 50.0], [0, 100.0, 40.0], [0, 0, 1.0]])
+    ego = pixel_to_ego(50, 40, 10.0, intrinsic, np.eye(3), np.zeros(3))
+    assert np.allclose(ego, [0, 0, 10], atol=1e-6)
+
+
 if __name__ == "__main__":
     test_front_camera_sees_the_road()
     test_ego_roundtrip_and_integration()
@@ -152,4 +158,5 @@ if __name__ == "__main__":
     test_parallel_copies_collapse()
     test_map_raster_becomes_a_line()
     test_split_vehicle_ids_join()
+    test_pixel_lifts_through_the_camera_centre()
     print("ok")

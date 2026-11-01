@@ -136,3 +136,21 @@ def frame_json(token: str) -> dict:
         "token": token,
         "source": "a2d2",
     }
+
+
+def pixel_to_ego(u, v, depth, intrinsic, rotation, translation):
+    """Back-project one pixel with metric depth into the ego frame.
+
+    ``rotation`` and ``translation`` are camera-to-ego for an OpenCV camera
+    (x right, y down, z forward), as returned by ``sensor_to_ego``.
+    """
+    z = float(depth)
+    if z <= 0.2:
+        return None
+    fx, fy = float(intrinsic[0, 0]), float(intrinsic[1, 1])
+    cx, cy = float(intrinsic[0, 2]), float(intrinsic[1, 2])
+    if fx == 0 or fy == 0:
+        return None
+    point = np.array([(u - cx) * z / fx, (v - cy) * z / fy, z], dtype=np.float64)
+    ego = np.asarray(rotation, dtype=np.float64) @ point + np.asarray(translation, dtype=np.float64)
+    return ego

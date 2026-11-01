@@ -1,0 +1,5 @@
+# Installed with --no-deps on Kaggle so the existing CUDA torch is not replaced.
+ultralytics
+einops
+timm
+huggingface_hub
