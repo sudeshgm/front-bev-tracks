@@ -2,7 +2,7 @@
 
 Run the lift pass again. Do not run `scripts/gpu_job.sh`. Do not rerun Qwen-Drive.
 
-The last run died on a negative-stride copy in the lane step. That line now copies the array first. Run current `main`.
+The last run exited 0 but wrote 0 lane tracks. The lane head was decoded on the wrong grid, so the mask never landed on the image. Current `main` decodes it the way YOLOPv2 does for a 1280x720 frame. It also drops the bonnet, which was a box at 4 m straight ahead on every frame.
 
 ```bash
 bash scripts/gpu_job_lift.sh

@@ -50,27 +50,34 @@ def resize_keep(image: np.ndarray, intrinsic: np.ndarray):
     return resized, scaled
 
 
-def letterbox(image: np.ndarray, size: int = 640):
+def yolop_canvas(image: np.ndarray):
+    """Paste the frame where YOLOPv2 expects a 1280x720 picture.
+
+    The traced head was exported for that letterbox: content is 640x360,
+    starting 140 rows down a 640x640 canvas. The returned mask is aligned
+    with ``image``, not with the canvas.
+    """
     height, width = image.shape[:2]
-    ratio = min(size / height, size / width)
-    resized_w, resized_h = int(round(width * ratio)), int(round(height * ratio))
-    resized = cv2.resize(image, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR)
-    canvas = np.full((size, size, 3), 114, np.uint8)
-    top = (size - resized_h) // 2
-    left = (size - resized_w) // 2
-    canvas[top : top + resized_h, left : left + resized_w] = resized
-    return canvas, ratio, left, top
+    content = cv2.resize(image, (640, 360), interpolation=cv2.INTER_LINEAR)
+    canvas = np.full((640, 640, 3), 114, np.uint8)
+    canvas[140 : 140 + 360, 0:640] = content
+    return canvas, height, width
 
 
-def mask_to_image(raw: torch.Tensor, positive: int | None = None) -> np.ndarray:
-    """Network head -> 640x640 probability. ``positive`` picks a class channel."""
+def head_mask(raw: torch.Tensor, drive: bool) -> np.ndarray:
+    """Official YOLOPv2 decode: crop the 16:9 band, double it, then threshold."""
+    if raw.ndim == 4 and raw.shape[-2] >= 372:
+        raw = raw[:, :, 12:372, :]
+    if drive and raw.ndim == 4 and raw.shape[1] > 1:
+        raw = raw.argmax(dim=1, keepdim=True).float()
+        up = F.interpolate(raw, scale_factor=2, mode="nearest")
+        return up.squeeze().detach().cpu().numpy() == 1
     if raw.ndim == 4 and raw.shape[1] > 1:
-        if positive is None:
-            raw = raw[:, :1]
-        else:
-            raw = torch.softmax(raw.float(), dim=1)[:, positive : positive + 1]
-    raw = F.interpolate(raw.float(), size=(640, 640), mode="bilinear", align_corners=False)
-    return raw.squeeze().detach().float().cpu().numpy()
+        raw = raw[:, 1:2]
+    up = F.interpolate(raw.float(), scale_factor=2, mode="bilinear", align_corners=False)
+    if float(up.detach().min()) < -0.05 or float(up.detach().max()) > 1.5:
+        up = torch.sigmoid(up)
+    return up.squeeze().detach().cpu().numpy() > 0.5
 
 
 def components(mask: np.ndarray, minimum: int) -> list[np.ndarray]:
@@ -86,13 +93,6 @@ def components(mask: np.ndarray, minimum: int) -> list[np.ndarray]:
         picked = order[::step]
         pieces.append(np.stack([xs[picked], ys[picked]], axis=1).astype(np.float64))
     return pieces
-
-
-def unletter(points: np.ndarray, ratio: float, left: int, top: int) -> np.ndarray:
-    out = points.copy()
-    out[:, 0] = (points[:, 0] - left) / ratio
-    out[:, 1] = (points[:, 1] - top) / ratio
-    return out
 
 
 def sample_depth(depth: np.ndarray, u: float, v: float) -> float:
@@ -168,25 +168,35 @@ def depth_of(model, pinhole_cls, image: np.ndarray, intrinsic: np.ndarray, devic
     return depth
 
 
-def lane_polylines(model, image: np.ndarray, depth, intrinsic, rotation, translation, device: str):
-    canvas, ratio, left, top = letterbox(image, 640)
+def lane_polylines(model, image: np.ndarray, depth, intrinsic, rotation, translation, device: str, report: dict):
+    canvas, image_h, image_w = yolop_canvas(image)
     tensor = torch.from_numpy(np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1))).float().div(255.0)
     tensor = tensor.unsqueeze(0).to(device)
     with torch.no_grad():
         _pred, drive, lanes = model(tensor)
+    if not report["seen"]:
+        report["seen"] = True
+        print(f"yolopv2 drive {tuple(drive.shape)} lanes {tuple(lanes.shape)}", flush=True)
+    lane_mask = head_mask(lanes, drive=False)
+    drive_mask = head_mask(drive, drive=True)
+    report["lane_px"] += int(lane_mask.sum())
+    report["drive_px"] += int(drive_mask.sum())
     lines = []
-    for piece in components(mask_to_image(lanes), minimum=40):
-        pixels = unletter(piece, ratio, left, top)
+    for piece in components(lane_mask.astype(np.float32), minimum=40):
+        pixels = piece.copy()
+        pixels[:, 0] *= image_w / lane_mask.shape[1]
+        pixels[:, 1] *= image_h / lane_mask.shape[0]
         lifted = lift_points(pixels, depth, intrinsic, rotation, translation)
         if len(lifted) >= 2:
             lines.append(lifted)
     edges = []
-    drive_mask = mask_to_image(drive, positive=1)
-    # Keep the lower part of the drivable area; the horizon is not an edge.
-    drive_mask[: int(drive_mask.shape[0] * 0.45)] = 0
-    for piece in components(drive_mask, minimum=80):
-        pixels = unletter(piece, ratio, left, top)
-        # The component is the whole road. Split it into its left and right rims.
+    # The drivable-area rim is the road edge. Ignore the sky half of the mask.
+    rim = drive_mask.copy()
+    rim[: int(rim.shape[0] * 0.45)] = False
+    for piece in components(rim.astype(np.float32), minimum=80):
+        pixels = piece.copy()
+        pixels[:, 0] *= image_w / rim.shape[1]
+        pixels[:, 1] *= image_h / rim.shape[0]
         by_row: dict[int, list[float]] = {}
         for u, v in pixels:
             by_row.setdefault(int(v), []).append(float(u))
@@ -195,9 +205,9 @@ def lane_polylines(model, image: np.ndarray, depth, intrinsic, rotation, transla
             cols = by_row[v]
             left_rim.append((min(cols), v))
             right_rim.append((max(cols), v))
-        for rim in (left_rim, right_rim):
-            step = max(1, len(rim) // 30)
-            lifted = lift_points(rim[::step], depth, intrinsic, rotation, translation)
+        for rim_pts in (left_rim, right_rim):
+            step = max(1, len(rim_pts) // 30)
+            lifted = lift_points(rim_pts[::step], depth, intrinsic, rotation, translation)
             if len(lifted) >= 2:
                 edges.append(lifted)
     return lines, edges
@@ -221,6 +231,9 @@ def detect(detector, image: np.ndarray, depth, intrinsic, rotation, translation)
         z = sample_depth(depth, u, v)
         ego = pixel_to_ego(u, v, z, intrinsic, rotation, translation)
         if ego is None or not (-5 < ego[0] < 80 and -25 < ego[1] < 40):
+            continue
+        # The bonnet sits at about 4 m straight ahead in the front camera.
+        if ego[0] < 7 and abs(ego[1]) < 1.8:
             continue
         bottom = float(ego[2])
         boxes.append([float(ego[0]), float(ego[1]), bottom, length, width, height, 0.0, 0.0, 0.0])
@@ -251,6 +264,7 @@ def main() -> None:
     if not folders:
         raise SystemExit(f"no frames in {args.frames}")
     packed = []
+    report = {"seen": False, "lane_px": 0, "drive_px": 0}
     for folder in folders:
         meta = json.loads((folder / "frame.json").read_text())
         calib = np.load(folder / "calib.npz")
@@ -271,7 +285,9 @@ def main() -> None:
             frame_scores.extend(scores)
             frame_labels.extend(labels)
             if qwen in LANE_CAMERAS:
-                lines, edges = lane_polylines(lanes_model, image, depth, intrinsic, rotation, translation, device)
+                lines, edges = lane_polylines(
+                    lanes_model, image, depth, intrinsic, rotation, translation, device, report
+                )
                 maps["road_line"].extend(lines)
                 maps["road_edge"].extend(edges)
         if frame_boxes:
@@ -292,6 +308,7 @@ def main() -> None:
             f"{len(maps['road_line'])} lines, {len(maps['road_edge'])} edges",
             flush=True,
         )
+    print(f"lane pixels {report['lane_px']}  drive pixels {report['drive_px']}", flush=True)
 
     objects = track_objects(packed, score_min=args.score, max_gap=10)
     lanes = track_lanes(packed)
