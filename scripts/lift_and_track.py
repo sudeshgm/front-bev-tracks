@@ -170,7 +170,7 @@ def depth_of(model, pinhole_cls, image: np.ndarray, intrinsic: np.ndarray, devic
 
 def lane_polylines(model, image: np.ndarray, depth, intrinsic, rotation, translation, device: str):
     canvas, ratio, left, top = letterbox(image, 640)
-    tensor = torch.from_numpy(canvas[:, :, ::-1].transpose(2, 0, 1)).float().div(255.0)
+    tensor = torch.from_numpy(np.ascontiguousarray(canvas[:, :, ::-1].transpose(2, 0, 1))).float().div(255.0)
     tensor = tensor.unsqueeze(0).to(device)
     with torch.no_grad():
         _pred, drive, lanes = model(tensor)

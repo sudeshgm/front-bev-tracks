@@ -1,6 +1,8 @@
 # GPU runner
 
-Run the lift pass. Do not run `scripts/gpu_job.sh`. Do not rerun Qwen-Drive.
+Run the lift pass again. Do not run `scripts/gpu_job.sh`. Do not rerun Qwen-Drive.
+
+The last run died on a negative-stride copy in the lane step. That line now copies the array first. Run current `main`.
 
 ```bash
 bash scripts/gpu_job_lift.sh
