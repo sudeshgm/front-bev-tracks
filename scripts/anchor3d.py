@@ -95,7 +95,43 @@ def gaps_at(frames: list[dict], forward: float) -> list[float]:
     return found
 
 
-def main() -> None:
+class Config(dict):
+    """A dict whose keys can also be read as attributes. mmcv is not installed."""
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError as exc:
+            raise AttributeError(key) from exc
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
+def wrap(value):
+    if isinstance(value, dict) and not isinstance(value, Config):
+        return Config({key: wrap(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return [wrap(item) for item in value]
+    return value
+
+
+def load_config(path: Path) -> Config:
+    namespace: dict = {}
+    exec(path.read_text(), namespace)  # the config file is plain assignments
+    model = wrap(namespace["model"])
+    model["pretrained"] = None
+    return model
+
+
+def build_model(config: Path):
+    import mmseg.models.backbones.resnet  # noqa: F401  registers ResNetV1c
+    import mmseg.models.losses.lane_loss  # noqa: F401  registers LaneLoss
+    import mmseg.models.lane_detector.anchor_3dlane  # noqa: F401
+    import mmseg.models.lane_detector.assigner.topk_assigner  # noqa: F401
+    from mmseg.models.builder import build_lanedetector
+
+    return build_lanedetector(load_config(config))
     parser = argparse.ArgumentParser()
     parser.add_argument("--frames", type=Path, default=ROOT / "data" / "frames")
     parser.add_argument("--output", type=Path, default=ROOT / "results")
@@ -105,13 +141,7 @@ def main() -> None:
     parser.add_argument("--score", type=float, default=0.2)
     args = parser.parse_args()
 
-    from mmcv import Config
-    from mmseg.models import build_lanedetector
-
-    cfg = Config.fromfile(str(args.config))
-    cfg.model.pretrained = None
-    cfg.model.backbone.pretrained = None
-    model = build_lanedetector(cfg.model)
+    model = build_model(args.config)
     blob = torch.load(args.checkpoint, map_location="cpu")
     state = blob["state_dict"] if isinstance(blob, dict) and "state_dict" in blob else blob
     state = {key.replace("module.", ""): value for key, value in state.items()}
