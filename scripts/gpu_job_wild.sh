@@ -12,7 +12,7 @@ if not torch.cuda.is_available():
 PY
 
 python -m pip install -q --upgrade "setuptools<80"
-python -m pip install -q --no-deps einops timm "ftfy==6.1.1" iopath regex huggingface_hub pyquaternion scipy ml_collections
+python -m pip install -q --no-deps einops timm "ftfy==6.1.1" iopath portalocker regex huggingface_hub pyquaternion scipy ml_collections
 python -m pip install -q --no-deps "utils3d @ git+https://github.com/EasternJournalist/utils3d.git"
 python -c "import vis4d" 2>/dev/null || python -m pip install -q vis4d==1.0.0
 python -c "import vis4d_cuda_ops" 2>/dev/null || python -m pip install -q "git+https://github.com/SysCV/vis4d_cuda_ops.git" --no-build-isolation --no-cache-dir
