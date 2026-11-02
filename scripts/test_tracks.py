@@ -150,6 +150,19 @@ def test_pixel_lifts_through_the_camera_centre():
     assert np.allclose(ego, [0, 0, 10], atol=1e-6)
 
 
+def test_cylinder_lift_roundtrip():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    camera = overlay.CylinderCamera(700.0, 700.0, 640.0, 360.0, [2.0, 0.0, 1.5], 1280, 720)
+    pixel = camera.project(22.0, -1.5, 0.0)
+    point = camera.lift(*pixel)
+    assert point is not None
+    assert abs(point[0] - 22.0) < 1e-6 and abs(point[1] + 1.5) < 1e-6
+
+
 if __name__ == "__main__":
     test_front_camera_sees_the_road()
     test_ego_roundtrip_and_integration()
@@ -159,4 +172,5 @@ if __name__ == "__main__":
     test_map_raster_becomes_a_line()
     test_split_vehicle_ids_join()
     test_pixel_lifts_through_the_camera_centre()
+    test_cylinder_lift_roundtrip()
     print("ok")
