@@ -20,8 +20,14 @@ class Sequential(BaseModule):
         for name, module in modules:
             self.add_module(name, module)
 
+    def __iter__(self):
+        return iter(self._modules.values())
+
+    def __len__(self):
+        return len(self._modules)
+
     def forward(self, x):
-        for module in self:
+        for module in self._modules.values():
             x = module(x)
         return x
 
