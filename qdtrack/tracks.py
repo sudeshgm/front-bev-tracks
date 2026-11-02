@@ -1,7 +1,7 @@
-"""Object and lane tracking on top of single-frame Qwen-Drive outputs.
+"""Object and lane tracking on single-frame detections.
 
-Perception is one frame at a time. Tracking stitches those frames in a local
-odometry frame built from the vehicle bus (speed + yaw rate).
+Detections are one frame at a time. Tracking stitches them in a local
+odometry frame built from the vehicle speed and yaw rate.
 """
 
 from __future__ import annotations

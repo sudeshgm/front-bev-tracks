@@ -1,6 +1,6 @@
 # CPU bot
 
-Owns https://github.com/sudeshgm/qwen-drive-a2d2. Does not run the model.
+Owns https://github.com/sudeshgm/front-bev-tracks. Does not run the model.
 The GPU bot owns the Kaggle notebook https://www.kaggle.com/code/hiddenslave/qwen-a2d2 (private, T4).
 
 ## Loop
@@ -14,9 +14,9 @@ The job is `bash scripts/gpu_job_wild.sh`. Do not pin an old commit. Do not run 
 
 ```bash
 cd /kaggle/working
-rm -rf qwen-drive-a2d2
-git clone https://github.com/sudeshgm/qwen-drive-a2d2
-cd qwen-drive-a2d2
+rm -rf front-bev-tracks
+git clone https://github.com/sudeshgm/front-bev-tracks
+cd front-bev-tracks
 git log -1 --format=%H > /kaggle/working/commit.txt
 nvidia-smi > /kaggle/working/nvidia_smi.txt
 start=$(date +%s)

@@ -1,1 +1,1 @@
-"""Tracking helpers for a Qwen-Drive perception run on non-nuScenes video."""
+"""Object and lane tracking for a front-camera clip with ego motion."""
