@@ -132,6 +132,9 @@ def build_model(config: Path):
     from mmseg.models.builder import build_lanedetector
 
     return build_lanedetector(load_config(config))
+
+
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--frames", type=Path, default=ROOT / "data" / "frames")
     parser.add_argument("--output", type=Path, default=ROOT / "results")
