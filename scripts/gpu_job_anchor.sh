@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Anchor3DLane on the front camera. Do not run the Qwen, lift, fuse, or WildDet jobs.
-# Do not pip-install torch. mmcv is imported, not compiled with CUDA ops.
+# Do not pip-install torch or mmcv. Kaggle's Python 3.13 cannot build mmcv 1.6.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,16 +11,39 @@ if not torch.cuda.is_available():
     raise SystemExit("no cuda")
 PY
 
-if ! python -c "import mmcv" >/dev/null 2>&1; then
-  MMCV_WITH_OPS=0 python -m pip install -q "mmcv==1.6.2"
-fi
-python -c "import mmcv; assert mmcv.__version__.startswith('1.6'), mmcv.__version__"
-
 if [[ ! -d third_party/Anchor3DLane/mmseg ]]; then
   rm -rf third_party/Anchor3DLane
   git clone --depth 1 https://github.com/tusen-ai/Anchor3DLane third_party/Anchor3DLane
 fi
-export PYTHONPATH="$(pwd)/third_party/Anchor3DLane:${PYTHONPATH:-}"
+
+python - <<'PY'
+from pathlib import Path
+root = Path("third_party/Anchor3DLane/mmseg/models")
+(root / "utils" / "__init__.py").write_text("from .res_layer import ResLayer\n")
+(root / "backbones" / "__init__.py").write_text("from .resnet import ResNet, ResNetV1c, ResNetV1d\n")
+(root / "losses" / "__init__.py").write_text("from .lane_loss import LaneLoss\n")
+(root / "lane_detector" / "__init__.py").write_text(
+    "from .anchor_3dlane import Anchor3DLane\nfrom .assigner import TopkAssigner\n"
+)
+(root / "__init__.py").write_text("from .builder import build_lanedetector\n")
+anchor = root / "lane_detector" / "utils" / "anchor.py"
+text = anchor.read_text()
+text = text.replace("import mmcv\n", "")
+text = text.replace(
+    "from mmseg.datasets.tools.utils import projection_g2im, resample_laneline_in_y\n",
+    "",
+)
+anchor.write_text(text)
+(root / "lane_detector" / "tools.py").write_text(
+    "import numpy as np\n\n"
+    "def homography_crop_resize(org_img_size, crop_y, resize_img_size):\n"
+    "    ratio_x = resize_img_size[1] / org_img_size[1]\n"
+    "    ratio_y = resize_img_size[0] / (org_img_size[0] - crop_y)\n"
+    "    return np.array([[ratio_x, 0, 0], [0, ratio_y, -ratio_y * crop_y], [0, 0, 1]])\n"
+)
+PY
+
+export PYTHONPATH="$(pwd)/compat:$(pwd)/third_party/Anchor3DLane:${PYTHONPATH:-}"
 
 mkdir -p weights
 if [[ ! -f weights/openlane_anchor3dlane.pth ]]; then
