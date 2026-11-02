@@ -358,11 +358,27 @@ def _polyline_length(points: np.ndarray) -> float:
     return float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
 
 
-def _chamfer(a: np.ndarray, b: np.ndarray) -> float:
-    if len(a) == 0 or len(b) == 0:
+def _overlap_distance(new: np.ndarray, old: np.ndarray) -> float:
+    """Mean distance from the new points to the overlapping part of the track.
+
+    A symmetric chamfer against the whole history grows with the road already
+    driven, so one marking was split every few dozen metres. Only the part of
+    the track that sits next to the new segment is compared.
+    """
+    if len(new) == 0 or len(old) == 0:
         return 1e9
-    d = np.linalg.norm(a[:, None, :] - b[None, :, :], axis=2)
-    return float(0.5 * (d.min(axis=1).mean() + d.min(axis=0).mean()))
+    lo = new.min(axis=0) - 4.0
+    hi = new.max(axis=0) + 4.0
+    window = old[np.all((old >= lo) & (old <= hi), axis=1)]
+    if len(window) == 0:
+        ends = np.stack([old[0], old[-1]])
+        return float(np.linalg.norm(new[:, None, :] - ends[None, :, :], axis=2).min())
+    dist = np.linalg.norm(new[:, None, :] - window[None, :, :], axis=2)
+    # A parallel marking is about 3 m away. A cloud must not swallow it just
+    # because some of the cloud's points happen to lie within the distance gate.
+    if abs(float(np.median(new[:, 1]) - np.median(window[:, 1]))) > 0.8:
+        return 1e9
+    return float(dist.min(axis=1).mean())
 
 
 def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2, collapse: bool = True) -> list[dict]:
@@ -383,7 +399,7 @@ def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2, collaps
                 for track in tracks:
                     if track["name"] != name or index - track["last_index"] > max_gap:
                         continue
-                    dist = _chamfer(world, track["world"])
+                    dist = _overlap_distance(world, track["world"])
                     if dist < best_dist:
                         best_dist = dist
                         best = track
@@ -453,7 +469,7 @@ def _collapse_lanes(tracks: list[dict]) -> list[dict]:
             angle -= np.pi
         if angle < -np.pi / 2:
             angle += np.pi
-        if length < 8 or chord / max(length, 1e-6) < 0.9 or abs(angle) > 0.35:
+        if length < 8 or chord / max(length, 1e-6) < 0.8 or abs(angle) > 0.35:
             continue
         kept.append(
             {
@@ -472,7 +488,24 @@ def _collapse_lanes(tracks: list[dict]) -> list[dict]:
         for candidate in groups:
             if candidate["name"] != item["track"]["name"]:
                 continue
-            if abs(candidate["y"] - item["y"]) >= 1.3:
+            # Compare the markings where they meet. The mean lateral of a long
+            # piece drifts through a bend, so it cannot be used as the match.
+            xa = max(item["x0"], candidate["x0"])
+            xb = min(item["x1"], candidate["x1"])
+            if xb < xa:
+                if item["x1"] < candidate["x0"]:
+                    end_a, end_b = item["x1"], candidate["x0"]
+                else:
+                    end_a, end_b = item["x0"], candidate["x1"]
+                sample_a, sample_b = end_a, end_b
+            else:
+                sample_a = sample_b = 0.5 * (xa + xb)
+            order_a = np.argsort(item["world"][:, 0])
+            cand = np.concatenate(candidate["world"], axis=0)
+            order_b = np.argsort(cand[:, 0])
+            ya = float(np.interp(sample_a, item["world"][order_a, 0], item["world"][order_a, 1]))
+            yb = float(np.interp(sample_b, cand[order_b, 0], cand[order_b, 1]))
+            if abs(ya - yb) >= 1.2:
                 continue
             if item["x1"] < candidate["x0"] - 12 or candidate["x1"] < item["x0"] - 12:
                 continue
@@ -504,11 +537,16 @@ def _collapse_lanes(tracks: list[dict]) -> list[dict]:
         if group["x1"] - group["x0"] < 15:
             continue
         pts = np.concatenate(group["world"], axis=0)
-        pts = pts[np.argsort(pts[:, 0])]
-        keep = [pts[0]]
-        for point in pts[1:]:
-            if point[0] - keep[-1][0] >= 1.5:
-                keep.append(point)
+        order = np.argsort(pts[:, 0])
+        pts = pts[order]
+        keep = []
+        start = 0
+        for index in range(1, len(pts) + 1):
+            if index < len(pts) and pts[index, 0] - pts[start, 0] < 1.5:
+                continue
+            chunk = pts[start:index]
+            keep.append([float(np.median(chunk[:, 0])), float(np.median(chunk[:, 1]))])
+            start = index
         if len(keep) < 2:
             continue
         collapsed.append(
