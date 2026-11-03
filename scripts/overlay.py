@@ -535,7 +535,7 @@ def build_frames(samples, poses, cache, camera):
                 "labels": np.asarray(labels, dtype=np.int64),
                 "maps": {
                     "road_line": list(data["lanes"][index]),
-                    "road_edge": list(data["edges"][index]) if "edges" in data.files else [],
+                    "road_edge": [],
                 },
                 "image_boxes": raw,
             }
@@ -550,7 +550,7 @@ def colour(track_id):
     return int(bgr[0]), int(bgr[1]), int(bgr[2])
 
 
-def draw_bev(objects, lanes, pose, width, height, now):
+def draw_bev(objects, lanes, pose, width, height, now, wild=None):
     scale = 12.0
     panel = np.full((height, width, 3), 28, np.uint8)
     origin_u = width // 2
@@ -595,6 +595,15 @@ def draw_bev(objects, lanes, pose, width, height, now):
             cv2.circle(panel, (u, v), 9, (0, 0, 0), -1)
             cv2.circle(panel, (u, v), 6, colour(track["id"]), -1)
             cv2.putText(panel, str(track["id"]), (u + 6, v - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (240, 240, 240), 1)
+    for det in wild or []:
+        centre = det.get("center_ego")
+        if not centre:
+            continue
+        u, v = screen((centre[0], centre[1]))
+        if not (-20 <= u < width + 20 and -20 <= v < height + 20):
+            continue
+        cv2.drawMarker(panel, (int(u), int(v)), (0, 200, 255), cv2.MARKER_DIAMOND, 14, 2)
+        cv2.putText(panel, det["name"], (int(u) + 8, int(v) + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 255), 1)
     nose = screen((2.2, 0))
     left = screen((-0.6, 0.8))
     right = screen((-0.6, -0.8))
@@ -602,7 +611,7 @@ def draw_bev(objects, lanes, pose, width, height, now):
     return panel
 
 
-def render(source, output, samples, poses, objects, lanes, cache, camera, frame_dt):
+def render(source, output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames=None):
     by_token = {}
     for track in objects:
         for sample in track["samples"]:
@@ -624,10 +633,7 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
         image = read_frame(source)
         if image is None:
             break
-        for line, paint in (
-            *[(line, (40, 220, 60)) for line in data["lanes"][index]],
-            *[(line, (40, 140, 255)) for line in (data["edges"][index] if "edges" in data.files else [])],
-        ):
+        for line in data["lanes"][index]:
             pixels = []
             for x, y in line:
                 pixel = camera.project(x, y)
@@ -635,7 +641,7 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
                     continue
                 pixels.append((int(pixel[0]), int(pixel[1])))
             if len(pixels) >= 2:
-                cv2.polylines(image, [np.asarray(pixels, np.int32)], False, paint, 2)
+                cv2.polylines(image, [np.asarray(pixels, np.int32)], False, (40, 220, 60), 2)
         matched = by_token.get(str(index), [])
         for row in kept_boxes(data["boxes"][index]):
             point = ground_contact(camera, float(row[0]), float(row[1]), float(row[2]), float(row[3]))
@@ -651,7 +657,20 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
             cv2.rectangle(image, (x1, y1), (x2, y2), paint, 2)
             if ident is not None:
                 cv2.putText(image, str(ident), (x1, max(16, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, paint, 1)
-        panel = draw_bev(objects, lanes, pose, 640, camera.height, index)
+        wild = [] if wild_frames is None else wild_frames[index]["detections"]
+        for det in wild:
+            xyxy = det.get("xyxy")
+            if not xyxy or len(xyxy) < 4:
+                continue
+            x1, y1, x2, y2 = [int(v) for v in xyxy[:4]]
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 200, 255), 2)
+            label = det["name"]
+            centre = det.get("center_ego")
+            guess = ground_contact(camera, x1, y1, x2, y2)
+            if centre and guess is not None:
+                label = f"{label} {centre[0] - guess[0]:+.1f},{centre[1] - guess[1]:+.1f}"
+            cv2.putText(image, label, (x1, min(camera.height - 4, y2 + 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
+        panel = draw_bev(objects, lanes, pose, 640, camera.height, index, wild)
         writer.stdin.write(np.concatenate([image, panel], axis=1).tobytes())
         if index % 30 == 0:
             print("render", index, flush=True)
@@ -677,6 +696,7 @@ def main():
     parser.add_argument("--lane-weights", type=Path, help="TwinLiteNetPlus large.pth.")
     parser.add_argument("--lane-config", default="large", choices=("nano", "small", "medium", "large"))
     parser.add_argument("--reuse-boxes", type=Path, help="Keep the vehicle boxes in this cache and recompute the lanes.")
+    parser.add_argument("--wilddet", type=Path, help="JSON from scripts/wilddet_clip.py. Drawn on top of the existing tracks.")
     parser.add_argument("--recompute", action="store_true")
     args = parser.parse_args()
     if args.repeat < 1:
@@ -706,7 +726,12 @@ def main():
     smooth_world(objects, poses, frame_dt)
     lanes = track_lanes(packed, gate=1.6, max_gap=3)
     print("tracks", len(objects), "lanes", len(lanes), "dt", round(frame_dt, 4), flush=True)
-    render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt)
+    wild_frames = None
+    if args.wilddet is not None:
+        wild_frames = json.loads(args.wilddet.read_text())["frames"]
+        if len(wild_frames) != len(samples):
+            raise SystemExit(f"wilddet file has {len(wild_frames)} frames, motion file has {len(samples)}")
+    render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames)
 
 
 if __name__ == "__main__":
