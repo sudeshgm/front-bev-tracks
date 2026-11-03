@@ -25,6 +25,8 @@ Pass `--frames` instead of `--video` when you already have one colour image per 
 
 Lane lines can come from a second model. `--lane-backend twinlite` runs [TwinLiteNet+](https://github.com/chequanghuy/TwinLiteNetPlus) (MIT) for the lane lines and takes the road edges from the left and right side of its drivable-area mask. Vehicle boxes stay with YOLOPv2. `--lane-code` is a checkout of that repo and `--lane-weights` is its `large.pth`. `--reuse-boxes cache.npz` keeps an existing box cache so the vehicle model is not run again. Road edges are drawn in orange and lane lines in green.
 
+`--wilddet results/wilddet.json` draws a second set of boxes from WildDet3D on top of those tracks. The JSON comes from `scripts/wilddet_clip.py` on a GPU. Each box is labelled with the prompt name. The two numbers after the name are how far the model's 3D centre is from the ground-plane guess, in metres, forward and left. A diamond in the bird's-eye panel is that centre. The ground-plane tracks are unchanged.
+
 ## Motion file
 
 CSV with header `t_s,speed_mps,yaw_rate_rps`. One row per camera frame. `t_s` is seconds and must increase. `speed_mps` is the ego speed. `yaw_rate_rps` is radians per second, positive to the left. Axes are ISO 8855: x forward, y left, z up.
