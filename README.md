@@ -49,7 +49,9 @@ JSON. Intrinsics match the video's image size. `position_m` is the camera in the
 
 A ground point in the camera frame projects as `u = cx - fx·atan2(y, x)` and `v = cy - fy·z / hypot(x, y)`. There is no pixel when `x <= 0`. The lift is the inverse of that onto the ground plane `z = 0`.
 
-Vehicles are tracked with a constant-velocity Kalman, forward and back. A vehicle whose sideways motion only follows the viewing angle, and which has not moved along the road, is held at the position from the most head-on views. That keeps a parked vehicle from sliding as the ego vehicle passes it. Lane lines are associated in the same odometry frame.
+Vehicles are tracked with a constant-velocity Kalman, forward and back. A vehicle whose sideways motion only follows the viewing angle, and which has not moved along the road, is held at the position from the most head-on views. That keeps a parked vehicle from sliding as the ego vehicle passes it.
+
+Each lane marking is one curve on the ground. The detector supplies the pixels of the marking. The curve is then moved so that projecting it with this camera and the ego motion lands on those pixels in every frame that sees it. Near and far pixels of the same marking pull the same curve, so a noisy far point cannot drag it. The front view and the bird's-eye view both draw that curve, not the raw detector mask. A marking has to run along the road: a stop line is not kept. A detection cache that stored lifted points instead of pixels is ignored and the detector is run again.
 
 ## Check
 

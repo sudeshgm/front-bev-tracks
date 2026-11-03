@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from qdtrack.geometry import build_lidar2img, pixel_to_ego, sensor_to_ego  # noqa: E402
 from qdtrack.tracks import (  # noqa: E402
     ego_to_world,
+    fit_lane_curves,
     integrate_ego,
     merge_object_tracks,
     polylines_from_map,
@@ -107,17 +108,94 @@ def test_lane_association():
     assert tracks[0]["hits"] == 4
 
 
-def test_parallel_copies_collapse():
+def test_reprojection_curve_keeps_gap_bend_and_outlier():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    camera = overlay.CylinderCamera(600.0, 600.0, 320.0, 240.0, [1.5, 0.0, 1.4], 640, 480)
+    samples = [{"t": i * 0.2, "speed_mps": 8.0, "yaw_rate": 0.0} for i in range(20)]
+    poses = integrate_ego(samples)
+
+    def lateral(name, station):
+        if name == "left":
+            return 1.75
+        # A real bend: the right marking moves out as station grows.
+        if station < 12.0:
+            return -1.75
+        return -1.75 - 0.004 * (station - 12.0) ** 2
+
+    def chain(name, pose, corrupt):
+        world = []
+        for station in np.arange(pose["x"] + 6.0, pose["x"] + 28.0, 1.0):
+            lat = lateral(name, station) + (0.9 if corrupt else 0.0)
+            world.append([station, lat])
+        pixels = camera.project_many(world_to_ego(np.asarray(world), pose))
+        keep = np.isfinite(pixels[:, 0])
+        keep &= (pixels[:, 0] > 0) & (pixels[:, 0] < camera.width)
+        keep &= (pixels[:, 1] > camera.cy + 2) & (pixels[:, 1] < camera.height)
+        pixels = pixels[keep]
+        if len(pixels) < 6:
+            return None
+        pixels = pixels + np.array([0.3, -0.2])
+        return pixels
+
     frames = []
-    for i in range(4):
-        pose = {"x": i * 8.0, "y": 0.0, "yaw": 0.0}
-        # Two traces of the same edge, 0.4 m apart, each covering the next stretch.
-        ego = np.array([[x - pose["x"], -1.5 + (0.4 if i % 2 else 0.0)] for x in range(i * 8, i * 8 + 12)], dtype=np.float64)
-        frames.append({"token": str(i), "t": i * 0.2, "pose": pose, "maps": {"road_line": [], "road_edge": [ego]}})
-    tracks = track_lanes(frames, gate=0.2)
-    assert len(tracks) == 1, [(t["id"], t["hits"]) for t in tracks]
-    xs = [p[0] for p in tracks[0]["world"]]
-    assert max(xs) - min(xs) > 25
+    for index, pose in enumerate(poses):
+        lines = []
+        for name in ("left", "right"):
+            # Eight frames of the right marking are a curb, 0.9 m outside the paint.
+            corrupt = name == "right" and index >= 12
+            pixels = chain(name, pose, corrupt)
+            if pixels is not None:
+                lines.append(pixels)
+        frames.append(
+            {
+                "token": str(index),
+                "t": samples[index]["t"],
+                "pose": pose,
+                "maps": {"road_line": lines, "road_edge": []},
+            }
+        )
+    curves = fit_lane_curves(frames, camera.project_many, camera.lift)
+    assert len(curves) == 2, [(c["id"], c["hits"], c["error_px"]) for c in curves]
+    path_xy = np.array([[p["x"], p["y"]] for p in poses])
+    for curve in curves:
+        world = np.asarray(curve["world"], dtype=np.float64)
+        nearest = np.linalg.norm(world[:, None, :] - path_xy[None, :, :], axis=2).argmin(1)
+        # Path is straight along x, yaw 0, so lateral is y.
+        lateral_y = world[:, 1]
+        station = world[:, 0]
+        early = lateral_y[station < 12.0]
+        late = lateral_y[station > 24.0]
+        assert len(early) and len(late)
+        if float(np.median(early)) > 0:
+            assert abs(float(np.median(early)) - 1.75) < 0.25, float(np.median(early))
+        else:
+            # The curb frames must not pull the paint, and the bend must remain.
+            assert abs(float(np.median(early)) + 1.75) < 0.25, float(np.median(early))
+            assert float(np.median(late)) < -2.4, (float(np.median(early)), float(np.median(late)))
+        assert curve["error_px"] < 4.0, curve["error_px"]
+        del nearest
+
+
+def test_image_lane_chain_is_pixels():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    camera = overlay.CylinderCamera(600.0, 600.0, 320.0, 240.0, [1.5, 0.0, 1.4], 640, 480)
+    mask = np.zeros((480, 640), dtype=bool)
+    mask[260:400, 300:303] = True
+    mask[260:400, 360:364] = True
+    mask[260:400, 10:80] = True  # too wide to be a marking
+    lines = overlay.lane_polylines(mask, camera)
+    assert len(lines) == 2, len(lines)
+    for line in lines:
+        assert line[:, 1].min() > camera.cy
+        assert 290 < line[:, 0].mean() < 380
 
 
 def test_map_raster_becomes_a_line():
@@ -172,7 +250,8 @@ if __name__ == "__main__":
     test_ego_roundtrip_and_integration()
     test_object_ids_survive_a_gap()
     test_lane_association()
-    test_parallel_copies_collapse()
+    test_reprojection_curve_keeps_gap_bend_and_outlier()
+    test_image_lane_chain_is_pixels()
     test_map_raster_becomes_a_line()
     test_split_vehicle_ids_join()
     test_pixel_lifts_through_the_camera_centre()

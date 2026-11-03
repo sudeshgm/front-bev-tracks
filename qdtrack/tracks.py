@@ -381,10 +381,12 @@ def _overlap_distance(new: np.ndarray, old: np.ndarray) -> float:
     return float(dist.min(axis=1).mean())
 
 
-def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2, collapse: bool = True) -> list[dict]:
+def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2) -> list[dict]:
     """Associate per-frame lane polylines (ego XY) into world tracks.
 
     frames need pose and maps[name] = list of (N, 2) ego polylines.
+    This keeps every trace. The overlay does not use it; a marking there is one
+    curve fitted by reprojection, not a chain of these traces.
     """
     tracks: list[dict] = []
     next_id = 1
@@ -422,11 +424,9 @@ def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2, collaps
                     next_id += 1
                 else:
                     fused = np.concatenate([best["world"], world], axis=0)
-                    # Keep a stable centreline: voxel-downsample in world.
                     key = np.round(fused / 0.5).astype(np.int32)
                     _, unique = np.unique(key, axis=0, return_index=True)
                     fused = fused[np.sort(unique)]
-                    # Reorder along the long axis so the viewer gets a line, not a cloud.
                     axis = int(np.argmax(fused.max(0) - fused.min(0)))
                     fused = fused[np.argsort(fused[:, axis])]
                     best["world"] = fused
@@ -446,120 +446,353 @@ def track_lanes(frames: list[dict], gate: float = 1.6, max_gap: int = 2, collaps
                 "samples": track["samples"],
             }
         )
-    if not collapse:
-        return published
-    return _collapse_lanes(published)
+    return published
 
 
-def _collapse_lanes(tracks: list[dict]) -> list[dict]:
-    """One physical marking is traced many times, a few tenths of a metre apart.
+# A chain joins a curve's seed only when its ground estimate is this close.
+# Parallel markings are about 3.5 m apart, so they stay separate. The number
+# does not set the curve: the reprojection fit does.
+_GROUP_M = 1.5
+_PIXEL_GATE = 12.0
+_MIN_FRAMES = 4
+_MIN_SPAN_M = 6.0
 
-    Keep the straight pieces that follow the road, then stitch copies whose
-    lateral offset agrees and whose ranges along the road meet or overlap.
-    """
-    kept = []
-    for track in tracks:
-        world = np.asarray(track["world"], dtype=np.float64).reshape(-1, 2)
-        if len(world) < 2:
+
+def _path_from_poses(poses: list[dict]):
+    xy = np.array([[pose["x"], pose["y"]] for pose in poses], dtype=np.float64)
+    yaw = np.array([pose["yaw"] for pose in poses], dtype=np.float64)
+    if len(xy) == 1:
+        return xy, np.array([0.0]), yaw
+    keep = [0]
+    for index in range(1, len(xy)):
+        if np.linalg.norm(xy[index] - xy[keep[-1]]) >= 0.05:
+            keep.append(index)
+    if keep[-1] != len(xy) - 1:
+        keep.append(len(xy) - 1)
+    xy = xy[keep]
+    yaw = yaw[keep]
+    step = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+    station = np.concatenate([[0.0], np.cumsum(step)])
+    return xy, station, yaw
+
+
+def _pose_at(station, path_xy, path_s, path_yaw):
+    if station <= path_s[0]:
+        yaw = float(path_yaw[0])
+        offset = station - path_s[0]
+        return path_xy[0] + offset * np.array([np.cos(yaw), np.sin(yaw)]), yaw
+    if station >= path_s[-1]:
+        yaw = float(path_yaw[-1])
+        offset = station - path_s[-1]
+        return path_xy[-1] + offset * np.array([np.cos(yaw), np.sin(yaw)]), yaw
+    index = int(np.searchsorted(path_s, station) - 1)
+    span = path_s[index + 1] - path_s[index]
+    if span < 1e-6:
+        return path_xy[index], float(path_yaw[index])
+    mix = (station - path_s[index]) / span
+    yaw = float(path_yaw[index])
+    return path_xy[index] * (1.0 - mix) + path_xy[index + 1] * mix, yaw
+
+
+def _station_lateral(points, path_xy, path_s, path_yaw):
+    nearest = np.linalg.norm(points[:, None, :] - path_xy[None, :, :], axis=2).argmin(axis=1)
+    yaw = path_yaw[nearest]
+    tangent = np.stack([np.cos(yaw), np.sin(yaw)], axis=1)
+    left = np.stack([-np.sin(yaw), np.cos(yaw)], axis=1)
+    delta = points - path_xy[nearest]
+    station = path_s[nearest] + np.sum(delta * tangent, axis=1)
+    lateral = np.sum(delta * left, axis=1)
+    return station, lateral
+
+
+def _subsample(points, count):
+    points = np.asarray(points, dtype=np.float64)
+    if len(points) <= count:
+        return points
+    index = np.linspace(0, len(points) - 1, count).astype(np.int32)
+    return points[index]
+
+
+def _segment_distance(points, polyline):
+    """Perpendicular distance from each point to a polyline."""
+    if len(polyline) == 0:
+        return np.full(len(points), 1e6)
+    if len(polyline) == 1:
+        return np.linalg.norm(points - polyline[0], axis=1)
+    start = polyline[:-1]
+    step = polyline[1:] - start
+    length2 = np.maximum(np.sum(step * step, axis=1), 1e-6)
+    offset = points[:, None, :] - start[None, :, :]
+    mix = np.clip(np.sum(offset * step[None, :, :], axis=2) / length2, 0.0, 1.0)
+    closest = start[None, :, :] + mix[:, :, None] * step[None, :, :]
+    return np.linalg.norm(points[:, None, :] - closest, axis=2).min(axis=1)
+
+
+def _projected_segments(world, pose, project_many):
+    ego = world_to_ego(np.asarray(world, dtype=np.float64), pose)
+    pixels = project_many(ego)
+    segments = []
+    current = []
+    for pixel in pixels:
+        if not np.isfinite(pixel[0]):
+            if len(current) >= 2:
+                segments.append(np.asarray(current, dtype=np.float64))
+            current = []
             continue
-        length = _polyline_length(world)
-        chord = float(np.linalg.norm(world[-1] - world[0]))
-        angle = float(np.arctan2(world[-1, 1] - world[0, 1], world[-1, 0] - world[0, 0]))
-        if angle > np.pi / 2:
-            angle -= np.pi
-        if angle < -np.pi / 2:
-            angle += np.pi
-        if length < 8 or chord / max(length, 1e-6) < 0.8 or abs(angle) > 0.35:
+        current.append(pixel)
+    if len(current) >= 2:
+        segments.append(np.asarray(current, dtype=np.float64))
+    return segments
+
+
+def _pixel_distance(pixels, world, pose, project_many):
+    segments = _projected_segments(world, pose, project_many)
+    if not segments:
+        return np.full(len(pixels), 64.0)
+    return np.min([_segment_distance(pixels, segment) for segment in segments], axis=0)
+
+
+def _curve_world(control_s, lateral, path_xy, path_s, path_yaw, step):
+    samples = np.arange(control_s[0], control_s[-1] + step * 0.5, step)
+    if len(samples) < 2:
+        samples = np.array([control_s[0], control_s[-1]])
+    offset = np.interp(samples, control_s, lateral)
+    world = []
+    for station, lat in zip(samples, offset):
+        origin, yaw = _pose_at(float(station), path_xy, path_s, path_yaw)
+        world.append(origin + lat * np.array([-np.sin(yaw), np.cos(yaw)]))
+    return np.asarray(world, dtype=np.float64)
+
+
+def _fit_controls(control_s, lateral, observations, poses, path_xy, path_s, path_yaw, project_many):
+    """Move the lateral of each control so the projected curve hits the pixels."""
+    values = np.asarray(lateral, dtype=np.float64).copy()
+    count = len(values)
+
+    def residual(current):
+        world = _curve_world(control_s, current, path_xy, path_s, path_yaw, 1.0)
+        parts = [
+            _pixel_distance(pixels, world, poses[index], project_many)
+            for index, pixels in observations
+        ]
+        if count >= 3:
+            second = current[:-2] - 2.0 * current[1:-1] + current[2:]
+            parts.append(second / 0.8)
+        return np.concatenate(parts)
+
+    def weights(error):
+        smooth = max(count - 2, 0)
+        pixel = error[:-smooth] if smooth else error
+        scale = np.ones(len(error))
+        large = np.abs(pixel) > 4.0
+        scaled = np.ones(len(pixel))
+        scaled[large] = 4.0 / np.maximum(np.abs(pixel[large]), 1e-6)
+        scale[: len(pixel)] = scaled
+        return scale
+
+    for _ in range(6):
+        base = residual(values)
+        weight = weights(base)
+        jacobian = np.zeros((len(base), count))
+        for index in range(count):
+            bumped = values.copy()
+            bumped[index] += 0.05
+            jacobian[:, index] = (residual(bumped) - base) / 0.05
+        scale = np.sqrt(weight)
+        system = (jacobian * scale[:, None]).T @ (jacobian * scale[:, None])
+        target = (jacobian * scale[:, None]).T @ (base * scale)
+        damp = 1e-3 * (np.trace(system) / max(count, 1) + 1e-6)
+        try:
+            step = np.linalg.solve(system + damp * np.eye(count), -target)
+        except np.linalg.LinAlgError:
+            break
+        step = np.clip(step, -0.4, 0.4)
+        if float(np.linalg.norm(step)) < 1e-3:
+            break
+        candidate = values + step
+        if np.sum(residual(candidate) ** 2 * weight) > np.sum(base ** 2 * weight):
+            candidate = values + 0.5 * step
+        values = candidate
+    world = _curve_world(control_s, values, path_xy, path_s, path_yaw, 1.0)
+    return values, world
+
+
+def _controls_from_stats(stats):
+    """One lateral per station bin. A sideways jump starts a new piece."""
+    order = np.argsort(stats[:, 0])
+    stats = stats[order]
+    if stats[-1, 0] - stats[0, 0] < _MIN_SPAN_M:
+        return []
+    step = 8.0 if stats[-1, 0] - stats[0, 0] > 80.0 else 5.0
+    edges = np.arange(stats[0, 0], stats[-1, 0] + step, step)
+    bins = []
+    for station in edges:
+        window = stats[np.abs(stats[:, 0] - station) <= step]
+        if len(window) == 0:
             continue
-        kept.append(
+        bins.append([float(station), float(np.median(window[:, 1]))])
+    if len(bins) < 2:
+        return []
+    bins = np.asarray(bins)
+    pieces = []
+    start = 0
+    for index in range(1, len(bins)):
+        jumped = abs(bins[index, 1] - bins[index - 1, 1]) > 2.5
+        near = abs(bins[index, 0] - bins[index - 1, 0]) < 2.0 * step + 1.0
+        if jumped and near:
+            pieces.append(bins[start:index])
+            start = index
+    pieces.append(bins[start:])
+    built = []
+    for piece in pieces:
+        if len(piece) < 2 or piece[-1, 0] - piece[0, 0] < _MIN_SPAN_M:
+            continue
+        built.append((piece[:, 0], piece[:, 1], piece))
+    return built
+
+
+def _compatible(stats, station, lateral):
+    window = stats[(stats[:, 0] >= station.min() - 8.0) & (stats[:, 0] <= station.max() + 8.0)]
+    if len(window) == 0:
+        gap = min(abs(float(station.min()) - float(stats[:, 0].max())), abs(float(stats[:, 0].min()) - float(station.max())))
+        if gap > 12.0:
+            return False
+        window = stats
+    return abs(float(np.median(lateral)) - float(np.median(window[:, 1]))) < _GROUP_M
+
+
+def _group_chains(chains):
+    """Group chains whose ground seeds lie on the same marking. Seeds only."""
+    groups = []
+    for chain in chains:
+        placed = False
+        for group in groups:
+            if _compatible(group["stats"], chain["station"], chain["lateral"]):
+                group["chains"].append(chain)
+                group["stats"] = np.concatenate([group["stats"], chain["stats"]], axis=0)
+                placed = True
+                break
+        if not placed:
+            groups.append({"chains": [chain], "stats": chain["stats"]})
+    return groups
+
+
+def _fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames):
+    fitted = []
+    for control_s, lateral, piece in _controls_from_stats(group["stats"]):
+        lo, hi = float(piece[0, 0]), float(piece[-1, 0])
+        members = [
+            chain
+            for chain in group["chains"]
+            if not (chain["station"].max() < lo - 8.0 or chain["station"].min() > hi + 8.0)
+        ]
+        if len({chain["index"] for chain in members}) < _MIN_FRAMES:
+            continue
+        observations = [(chain["index"], chain["pixels"]) for chain in members]
+        _values, world = _fit_controls(
+            control_s, lateral, observations, poses, path_xy, path_s, path_yaw, project_many
+        )
+        support = []
+        errors = []
+        for chain in members:
+            distance = _pixel_distance(chain["pixels"], world, poses[chain["index"]], project_many)
+            if float(np.median(distance)) <= _PIXEL_GATE:
+                support.append(chain["index"])
+                errors.append(distance)
+        frames_hit = len(set(support))
+        if frames_hit < _MIN_FRAMES or not errors:
+            continue
+        error = float(np.median(np.concatenate(errors)))
+        if error > 8.0:
+            continue
+        support_set = set(support)
+        samples = [{"token": frames[index]["token"], "ego": []} for index in sorted(support_set)]
+        fitted.append(
             {
-                "track": track,
-                "length": length,
-                "y": float(world[:, 1].mean()),
-                "x0": float(world[:, 0].min()),
-                "x1": float(world[:, 0].max()),
-                "world": world,
+                "name": "road_line",
+                "hits": frames_hit,
+                "world": np.round(world, 3).tolist(),
+                "samples": samples,
+                "error_px": round(error, 2),
+                "_members": [chain for chain in members if chain["index"] in support_set],
             }
         )
-    kept.sort(key=lambda item: (item["track"]["name"], item["y"]))
-    groups: list[dict] = []
-    for item in kept:
-        group = None
-        for candidate in groups:
-            if candidate["name"] != item["track"]["name"]:
+    return fitted
+
+
+def fit_lane_curves(frames, project_many, lift) -> list[dict]:
+    """One ground curve per marking, fitted so its projection hits the pixels.
+
+    maps['road_line'] is a list of polylines in pixels, (u, v). The lift is
+    used once, to decide which chains are the same marking and to place the
+    first control points. A control point then moves to reduce the pixel
+    error of every frame that sees it, so a near pixel and a far pixel of the
+    same marking pull the same curve. A chain that does not lie on the
+    projected curve is not part of it.
+    """
+    if not frames:
+        return []
+    poses = [frame["pose"] for frame in frames]
+    path_xy, path_s, path_yaw = _path_from_poses(poses)
+    chains = []
+    for index, frame in enumerate(frames):
+        for poly in frame.get("maps", {}).get("road_line", []):
+            pixels = _subsample(np.asarray(poly, dtype=np.float64).reshape(-1, 2), 30)
+            if len(pixels) < 4:
                 continue
-            # Compare the markings where they meet. The mean lateral of a long
-            # piece drifts through a bend, so it cannot be used as the match.
-            xa = max(item["x0"], candidate["x0"])
-            xb = min(item["x1"], candidate["x1"])
-            if xb < xa:
-                if item["x1"] < candidate["x0"]:
-                    end_a, end_b = item["x1"], candidate["x0"]
-                else:
-                    end_a, end_b = item["x0"], candidate["x1"]
-                sample_a, sample_b = end_a, end_b
-            else:
-                sample_a = sample_b = 0.5 * (xa + xb)
-            order_a = np.argsort(item["world"][:, 0])
-            cand = np.concatenate(candidate["world"], axis=0)
-            order_b = np.argsort(cand[:, 0])
-            ya = float(np.interp(sample_a, item["world"][order_a, 0], item["world"][order_a, 1]))
-            yb = float(np.interp(sample_b, cand[order_b, 0], cand[order_b, 1]))
-            if abs(ya - yb) >= 1.2:
+            ego = []
+            for u, v in pixels:
+                point = lift(float(u), float(v))
+                if point is not None:
+                    ego.append(point[:2])
+            if len(ego) < 4:
                 continue
-            if item["x1"] < candidate["x0"] - 12 or candidate["x1"] < item["x0"] - 12:
-                continue
-            group = candidate
-            break
-        if group is None:
-            groups.append(
+            world = ego_to_world(np.asarray(ego, dtype=np.float64), poses[index])
+            station, lateral = _station_lateral(world, path_xy, path_s, path_yaw)
+            chains.append(
                 {
-                    "name": item["track"]["name"],
-                    "y": item["y"],
-                    "weight": item["length"],
-                    "hits": item["track"]["hits"],
-                    "x0": item["x0"],
-                    "x1": item["x1"],
-                    "world": [item["world"]],
-                    "samples": list(item["track"]["samples"]),
+                    "index": index,
+                    "pixels": pixels,
+                    "station": station,
+                    "lateral": lateral,
+                    "stats": np.stack([station, lateral], axis=1),
                 }
             )
-            continue
-        group["y"] = (group["y"] * group["weight"] + item["y"] * item["length"]) / (group["weight"] + item["length"])
-        group["weight"] += item["length"]
-        group["hits"] += item["track"]["hits"]
-        group["x0"] = min(group["x0"], item["x0"])
-        group["x1"] = max(group["x1"], item["x1"])
-        group["world"].append(item["world"])
-        group["samples"].extend(item["track"]["samples"])
-    collapsed = []
-    for group in groups:
-        if group["x1"] - group["x0"] < 15:
-            continue
-        pts = np.concatenate(group["world"], axis=0)
-        order = np.argsort(pts[:, 0])
-        pts = pts[order]
-        keep = []
-        start = 0
-        for index in range(1, len(pts) + 1):
-            if index < len(pts) and pts[index, 0] - pts[start, 0] < 1.5:
-                continue
-            chunk = pts[start:index]
-            keep.append([float(np.median(chunk[:, 0])), float(np.median(chunk[:, 1]))])
-            start = index
-        if len(keep) < 2:
-            continue
-        collapsed.append(
-            {
-                "id": len(collapsed) + 1,
-                "name": group["name"],
-                "hits": group["hits"],
-                "world": np.round(np.stack(keep), 3).tolist(),
-                "samples": group["samples"],
-            }
-        )
-    return collapsed
+    if not chains:
+        return []
 
+    def produce(groups):
+        found = []
+        for group in groups:
+            if len({chain["index"] for chain in group["chains"]}) < _MIN_FRAMES:
+                continue
+            found.extend(_fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames))
+        return found
+
+    curves = produce(_group_chains(chains))
+    if curves:
+        regrouped = []
+        used = set()
+        for curve in curves:
+            members = curve.get("_members") or []
+            if len({chain["index"] for chain in members}) < _MIN_FRAMES:
+                continue
+            regrouped.append(
+                {"chains": members, "stats": np.concatenate([chain["stats"] for chain in members], axis=0)}
+            )
+            used.update(id(chain) for chain in members)
+        leftovers = [chain for chain in chains if id(chain) not in used]
+        regrouped.extend(_group_chains(leftovers))
+        refined = produce(regrouped)
+        if refined:
+            curves = refined
+
+    published = []
+    for curve in curves:
+        curve.pop("_members", None)
+        curve["id"] = len(published) + 1
+        published.append(curve)
+    return published
 
 def merge_object_tracks(tracks: list[dict], token_time: dict[str, float]) -> list[dict]:
     """Join tracks that are the same object seen twice.
