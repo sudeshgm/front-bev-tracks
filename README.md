@@ -23,6 +23,8 @@ One output frame per motion row. CPU is enough. Needs PyTorch, OpenCV, and ffmpe
 
 Pass `--frames` instead of `--video` when you already have one colour image per motion row (PNG or JPEG, sorted by filename). OpenCV reads them as BGR. That avoids encoding the frames to a video and decoding them again before the detector. The output video is tagged BT.709, limited range. Do not boost saturation before detection; the detector must see the camera's own colour.
 
+Lane lines can come from a second model. `--lane-backend twinlite` runs [TwinLiteNet+](https://github.com/chequanghuy/TwinLiteNetPlus) (MIT) for the lane lines and takes the road edges from the left and right side of its drivable-area mask. Vehicle boxes stay with YOLOPv2. `--lane-code` is a checkout of that repo and `--lane-weights` is its `large.pth`. `--reuse-boxes cache.npz` keeps an existing box cache so the vehicle model is not run again. Road edges are drawn in orange and lane lines in green.
+
 ## Motion file
 
 CSV with header `t_s,speed_mps,yaw_rate_rps`. One row per camera frame. `t_s` is seconds and must increase. `speed_mps` is the ego speed. `yaw_rate_rps` is radians per second, positive to the left. Axes are ISO 8855: x forward, y left, z up.
