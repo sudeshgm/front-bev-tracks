@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Stitch lane fragments and join split object ids in an existing eval.json.
+"""Join split object ids in an existing eval.json.
 
-No model is run. The input is the perception job's eval file.
+No model is run. Lane curves are fitted in the overlay, so this does not
+rewrite them.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from qdtrack.tracks import _collapse_lanes, merge_object_tracks  # noqa: E402
+from qdtrack.tracks import merge_object_tracks  # noqa: E402
 
 
 def main() -> None:
@@ -30,7 +31,6 @@ def main() -> None:
     before_objects = len(doc["object_tracks"])
     before_lanes = len(doc["lane_tracks"])
     doc["object_tracks"] = merge_object_tracks(doc["object_tracks"], token_time)
-    doc["lane_tracks"] = _collapse_lanes(doc["lane_tracks"])
     doc["cleaned"] = {
         "object_tracks_before": before_objects,
         "lane_tracks_before": before_lanes,

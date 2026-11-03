@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qdtrack.tracks import integrate_ego, track_lanes, track_objects, world_to_ego
+from qdtrack.tracks import fit_lane_curves, integrate_ego, track_objects, world_to_ego
 
 MODEL = 640
 CONTENT_H = 360
@@ -94,6 +94,19 @@ class CylinderCamera:
         u = self.cx - self.fx * np.arctan2(cam[1], cam[0])
         v = self.cy - self.fy * cam[2] / np.hypot(cam[0], cam[1])
         return float(u), float(v)
+
+    def project_many(self, xy):
+        """Ground points (N, 2) in the vehicle frame to pixels. NaN when x <= 0.5."""
+        xy = np.asarray(xy, dtype=np.float64).reshape(-1, 2)
+        delta = xy - self.position[:2]
+        out = np.full((len(xy), 2), np.nan)
+        valid = delta[:, 0] > 0.5
+        if not np.any(valid):
+            return out
+        hyp = np.hypot(delta[:, 0], delta[:, 1])
+        out[valid, 0] = self.cx - self.fx * np.arctan2(delta[valid, 1], delta[valid, 0])
+        out[valid, 1] = self.cy + self.fy * self.position[2] / np.maximum(hyp[valid], 1e-6)
+        return out
 
 
 def load_motion(path):
@@ -168,22 +181,22 @@ def _iou(a, b):
 
 
 def lane_polylines(mask, camera):
-    """Centre of each lane-mask run, linked down the image, then lifted."""
+    """Centre of each lane-mask run, linked down the image. Pixels, not metres."""
+    if mask is None:
+        return []
+    row_index = range(int(camera.cy) + 6, camera.height - 8, 3)
     rows = []
-    for v in range(int(camera.cy) + 6, camera.height - 8, 3):
+    for v in row_index:
         cols = np.flatnonzero(mask[v])
         if len(cols) == 0:
             rows.append([])
             continue
         splits = np.where(np.diff(cols) > 6)[0] + 1
-        runs = np.split(cols, splits)
         points = []
-        for run in runs:
-            if not (2 <= len(run) <= 50):
+        for run in np.split(cols, splits):
+            if not (2 <= len(run) <= 40):
                 continue
-            point = camera.lift(float(run.mean()), float(v))
-            if point is not None:
-                points.append(point[:2])
+            points.append((float(run.mean()), float(v)))
         rows.append(points)
     used = [set() for _ in rows]
     lines = []
@@ -194,21 +207,28 @@ def lane_polylines(mask, camera):
             chain = [point]
             used[r].add(i)
             prev = point
-            for n in range(r + 1, min(r + 80, len(rows))):
-                best, best_d = None, 1.2
+            misses = 0
+            for n in range(r + 1, min(r + 120, len(rows))):
+                if not rows[n]:
+                    misses += 1
+                    if misses > 2:
+                        break
+                    continue
+                misses = 0
+                best, best_d = None, 48.0
                 for j, cand in enumerate(rows[n]):
                     if j in used[n]:
                         continue
-                    dist = abs(cand[1] - prev[1]) + 0.15 * abs(cand[0] - prev[0])
-                    if dist < best_d and cand[0] > prev[0] - 1.0:
+                    dist = abs(cand[0] - prev[0])
+                    if dist < best_d:
                         best, best_d = j, dist
                 if best is None:
                     break
                 used[n].add(best)
                 prev = rows[n][best]
                 chain.append(prev)
-            chain = np.asarray(chain)
-            if len(chain) >= 6 and np.linalg.norm(np.diff(chain, axis=0), axis=1).sum() >= 4.0:
+            chain = np.asarray(chain, dtype=np.float64)
+            if len(chain) >= 6 and np.linalg.norm(np.diff(chain, axis=0), axis=1).sum() >= 30.0:
                 lines.append(chain[::2])
     return lines
 
@@ -456,14 +476,19 @@ def read_frame(source):
 
 def infer(source, weights, samples, camera, cache, lane_backend="yolopv2", lane_code=None, lane_weights=None, lane_config="large", prior_boxes=None):
     torch.set_num_threads(4)
-    model = None if prior_boxes is not None else torch.jit.load(str(weights), map_location="cpu").eval()
+    # The lane mask comes from the same forward pass as the boxes. Reusing boxes
+    # still has to run that pass, unless a second model is supplying the lanes.
+    model = None
+    if prior_boxes is None or lane_backend != "twinlite":
+        model = torch.jit.load(str(weights), map_location="cpu").eval()
     lanes_model = load_twinlite(lane_code, lane_weights, lane_config) if lane_backend == "twinlite" else None
     boxes_out, scores_out, lanes_out, edges_out = [], [], [], []
     for index in range(len(samples)):
         image = read_frame(source)
         if image is None:
             break
-        if prior_boxes is None:
+        mask = None
+        if model is not None:
             content = cv2.resize(image, (MODEL, CONTENT_H))
             canvas = np.full((MODEL, MODEL, 3), 114, np.uint8)
             canvas[PAD_Y : PAD_Y + CONTENT_H, :] = content
@@ -475,22 +500,24 @@ def infer(source, weights, samples, camera, cache, lane_backend="yolopv2", lane_
             )
             with torch.no_grad():
                 pred, _drive, lanes = model(tensor)
-            band = (lanes[0, 0, PAD_Y : PAD_Y + CONTENT_H] > 0.5).cpu().numpy().astype(np.uint8)
-            mask = cv2.resize(band, (camera.width, camera.height), interpolation=cv2.INTER_NEAREST) > 0
-            image_boxes = decode_boxes(pred, camera)
-            ego_boxes, ego_scores = [], []
-            for x1, y1, x2, y2, score in image_boxes:
-                point = camera.lift((x1 + x2) / 2, y2)
-                if point is None:
-                    continue
-                ego_boxes.append([x1, y1, x2, y2, point[0], point[1], score])
-                ego_scores.append(score)
-            boxes_out.append(np.asarray(ego_boxes, dtype=np.float32).reshape(-1, 7))
-            scores_out.append(np.asarray(ego_scores, dtype=np.float32))
-        else:
+            if lanes_model is None:
+                band = (lanes[0, 0, PAD_Y : PAD_Y + CONTENT_H] > 0.5).cpu().numpy().astype(np.uint8)
+                mask = cv2.resize(band, (camera.width, camera.height), interpolation=cv2.INTER_NEAREST) > 0
+            if prior_boxes is None:
+                image_boxes = decode_boxes(pred, camera)
+                ego_boxes, ego_scores = [], []
+                for x1, y1, x2, y2, score in image_boxes:
+                    point = camera.lift((x1 + x2) / 2, y2)
+                    if point is None:
+                        continue
+                    ego_boxes.append([x1, y1, x2, y2, point[0], point[1], score])
+                    ego_scores.append(score)
+                boxes_out.append(np.asarray(ego_boxes, dtype=np.float32).reshape(-1, 7))
+                scores_out.append(np.asarray(ego_scores, dtype=np.float32))
+        if prior_boxes is not None:
             boxes_out.append(np.asarray(prior_boxes[index], dtype=np.float32).reshape(-1, 7))
-            scores_out.append(np.asarray(prior_boxes[index], dtype=np.float32).reshape(-1, 7)[:, 6] if len(prior_boxes[index]) else np.zeros(0, np.float32))
-            mask = None
+            row = np.asarray(prior_boxes[index], dtype=np.float32).reshape(-1, 7)
+            scores_out.append(row[:, 6] if len(row) else np.zeros(0, np.float32))
         if lanes_model is not None:
             mask, drivable = twinlite_masks(lanes_model, image)
             edges = rim_lines(drivable, camera)
@@ -508,6 +535,7 @@ def infer(source, weights, samples, camera, cache, lane_backend="yolopv2", lane_
         scores=np.array(scores_out, dtype=object),
         lanes=np.array(lanes_out, dtype=object),
         edges=np.array(edges_out, dtype=object),
+        lane_space=np.array("image"),
     )
     print("cached", len(boxes_out), flush=True)
 
@@ -633,15 +661,28 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
         image = read_frame(source)
         if image is None:
             break
-        for line in data["lanes"][index]:
-            pixels = []
-            for x, y in line:
-                pixel = camera.project(x, y)
-                if pixel is None:
+        for track in lanes:
+            local = world_to_ego(np.asarray(track["world"], dtype=np.float64), pose)
+            pixels = camera.project_many(local)
+            current = []
+            segments = []
+            for pixel in pixels:
+                if not np.isfinite(pixel[0]):
+                    if len(current) >= 2:
+                        segments.append(current)
+                    current = []
                     continue
-                pixels.append((int(pixel[0]), int(pixel[1])))
-            if len(pixels) >= 2:
-                cv2.polylines(image, [np.asarray(pixels, np.int32)], False, (40, 220, 60), 2)
+                u, v = int(pixel[0]), int(pixel[1])
+                if -40 <= u < camera.width + 40 and -40 <= v < camera.height + 40:
+                    current.append((u, v))
+                else:
+                    if len(current) >= 2:
+                        segments.append(current)
+                    current = []
+            if len(current) >= 2:
+                segments.append(current)
+            for segment in segments:
+                cv2.polylines(image, [np.asarray(segment, np.int32)], False, (40, 220, 60), 2)
         matched = by_token.get(str(index), [])
         for row in kept_boxes(data["boxes"][index]):
             point = ground_contact(camera, float(row[0]), float(row[1]), float(row[2]), float(row[3]))
@@ -712,8 +753,19 @@ def main():
         if len(prior) != len(samples):
             raise SystemExit(f"box cache has {len(prior)} frames, motion file has {len(samples)}")
     source = open_frames(args.video, args.frames, camera, args.repeat)
-    cached_edges = cache.exists() and "edges" in np.load(cache, allow_pickle=True).files
-    fresh = args.recompute or not cache.exists() or (args.lane_backend == "twinlite" and not cached_edges)
+    image_lanes = False
+    cached_edges = False
+    if cache.exists():
+        with np.load(cache, allow_pickle=True) as cached:
+            cached_edges = "edges" in cached.files
+            if "lane_space" in cached.files:
+                image_lanes = str(cached["lane_space"].reshape(-1)[0]) == "image"
+    fresh = (
+        args.recompute
+        or not cache.exists()
+        or not image_lanes
+        or (args.lane_backend == "twinlite" and not cached_edges)
+    )
     if fresh:
         infer(
             source, args.weights, samples, camera, cache,
@@ -724,8 +776,14 @@ def main():
     packed = build_frames(samples, poses, cache, camera)
     objects = track_objects(packed, score_min=0.4, max_gap=8)
     smooth_world(objects, poses, frame_dt)
-    lanes = track_lanes(packed, gate=1.6, max_gap=3)
-    print("tracks", len(objects), "lanes", len(lanes), "dt", round(frame_dt, 4), flush=True)
+    lanes = fit_lane_curves(packed, camera.project_many, camera.lift)
+    print(
+        "tracks", len(objects),
+        "lanes", len(lanes),
+        "lane_px", [track.get("error_px") for track in lanes],
+        "dt", round(frame_dt, 4),
+        flush=True,
+    )
     wild_frames = None
     if args.wilddet is not None:
         wild_frames = json.loads(args.wilddet.read_text())["frames"]

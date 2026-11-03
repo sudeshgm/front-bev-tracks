@@ -365,7 +365,7 @@ def main():
         )
 
     objects = track_objects(packed, score_min=args.score, max_gap=8)
-    lanes = track_lanes(packed, max_gap=8, collapse=False)
+    lanes = track_lanes(packed, max_gap=8)
     args.output.mkdir(parents=True, exist_ok=True)
     document = {
         "model": "yolopv2 + unidepth-v2-vits14",
