@@ -331,24 +331,52 @@ def smooth_world(tracks, poses, frame_dt):
             sample["world"] = [float(point[0]), float(point[1])]
 
 
-def read_frame(capture, camera, repeat):
-    ok, image = capture.read()
-    if not ok:
-        return None
-    for _ in range(repeat - 1):
-        capture.read()
+def open_frames(video, frames, camera, repeat):
+    """BGR frames in motion-row order, either from a video or from image files.
+
+    Image files must already be colour. Sorting is by filename. This skips a
+    video encode, which would quantise the colour and leave the file untagged.
+    """
+    if frames is not None:
+        paths = sorted(
+            path
+            for path in Path(frames).iterdir()
+            if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp"}
+        )
+        if not paths:
+            raise SystemExit(f"no images in {frames}")
+        return {"paths": paths, "index": 0, "camera": camera, "repeat": 1}
+    if video is None:
+        raise SystemExit("pass --video or --frames")
+    return {"capture": cv2.VideoCapture(str(video)), "camera": camera, "repeat": repeat}
+
+
+def read_frame(source):
+    camera = source["camera"]
+    if "paths" in source:
+        if source["index"] >= len(source["paths"]):
+            return None
+        image = cv2.imread(str(source["paths"][source["index"]]), cv2.IMREAD_COLOR)
+        source["index"] += 1
+        if image is None:
+            raise SystemExit(f"could not read {source['paths'][source['index'] - 1]}")
+    else:
+        ok, image = source["capture"].read()
+        if not ok:
+            return None
+        for _ in range(source["repeat"] - 1):
+            source["capture"].read()
     if image.shape[1] != camera.width or image.shape[0] != camera.height:
         image = cv2.resize(image, (camera.width, camera.height))
     return image
 
 
-def infer(video, weights, samples, camera, cache, repeat):
+def infer(source, weights, samples, camera, cache):
     torch.set_num_threads(4)
     model = torch.jit.load(str(weights), map_location="cpu").eval()
-    capture = cv2.VideoCapture(str(video))
     boxes_out, scores_out, lanes_out = [], [], []
     for index in range(len(samples)):
-        image = read_frame(capture, camera, repeat)
+        image = read_frame(source)
         if image is None:
             break
         content = cv2.resize(image, (MODEL, CONTENT_H))
@@ -474,25 +502,26 @@ def draw_bev(objects, lanes, pose, width, height, now):
     return panel
 
 
-def render(video, output, samples, poses, objects, lanes, cache, camera, repeat, frame_dt):
+def render(source, output, samples, poses, objects, lanes, cache, camera, frame_dt):
     by_token = {}
     for track in objects:
         for sample in track["samples"]:
             by_token.setdefault(sample["token"], []).append((track["id"], sample["box"]))
-    capture = cv2.VideoCapture(str(video))
     width, height = camera.width + 640, camera.height
     writer = subprocess.Popen(
         [
             "ffmpeg", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24",
             "-s", f"{width}x{height}", "-r", f"{1.0 / frame_dt:.6f}", "-i", "-",
-            "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-an", "-vf", "scale=in_range=full:out_range=tv:in_color_matrix=bt709:out_color_matrix=bt709",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
             "-movflags", "+faststart", str(output),
         ],
         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     data = np.load(cache, allow_pickle=True)
     for index, pose in enumerate(poses):
-        image = read_frame(capture, camera, repeat)
+        image = read_frame(source)
         if image is None:
             break
         for line in data["lanes"][index]:
@@ -532,7 +561,8 @@ def render(video, output, samples, poses, objects, lanes, cache, camera, repeat,
 
 def main():
     parser = argparse.ArgumentParser(description="Front view and bird's-eye overlay for one clip.")
-    parser.add_argument("--video", required=True, type=Path)
+    parser.add_argument("--video", type=Path, help="Colour video, one view. Omit if --frames is set.")
+    parser.add_argument("--frames", type=Path, help="Directory of colour images, sorted by name, one per motion row.")
     parser.add_argument("--motion", required=True, type=Path)
     parser.add_argument("--camera", required=True, type=Path)
     parser.add_argument("--weights", required=True, type=Path, help="TorchScript YOLOPv2, 1x3x640x640 input")
@@ -546,14 +576,16 @@ def main():
     camera = CylinderCamera.load(args.camera)
     samples, poses, frame_dt = load_motion(args.motion)
     cache = args.cache or args.output.with_suffix(".npz")
+    source = open_frames(args.video, args.frames, camera, args.repeat)
     if args.recompute or not cache.exists():
-        infer(args.video, args.weights, samples, camera, cache, args.repeat)
+        infer(source, args.weights, samples, camera, cache)
+        source = open_frames(args.video, args.frames, camera, args.repeat)
     packed = build_frames(samples, poses, cache, camera)
     objects = track_objects(packed, score_min=0.4, max_gap=8)
     smooth_world(objects, poses, frame_dt)
     lanes = track_lanes(packed, gate=1.6, max_gap=3)
     print("tracks", len(objects), "lanes", len(lanes), "dt", round(frame_dt, 4), flush=True)
-    render(args.video, args.output, samples, poses, objects, lanes, cache, camera, args.repeat, frame_dt)
+    render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt)
 
 
 if __name__ == "__main__":
