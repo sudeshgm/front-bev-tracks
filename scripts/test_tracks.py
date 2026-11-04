@@ -22,6 +22,7 @@ from qdtrack.tracks import (  # noqa: E402
     track_lanes,
     track_objects,
     world_to_ego,
+    _uncross,
 )
 
 
@@ -341,6 +342,22 @@ def test_a_merge_taper_stays_one_marking():
     assert any(lo < 2.2 and hi > 4.0 for lo, hi in spanned), spanned
 
 
+def test_two_markings_do_not_cross():
+    path_xy = np.array([[float(i), 0.0] for i in range(40)])
+    path_s = path_xy[:, 0].copy()
+    path_yaw = np.zeros(len(path_xy))
+    left_then_right = [[float(x), 1.5 if x < 20 else -1.5] for x in range(5, 35)]
+    right_then_left = [[float(x), -1.5 if x < 20 else 1.5] for x in range(5, 35)]
+    curves = [
+        {"world": left_then_right, "hits": 10, "error_px": 1.0, "name": "road_line"},
+        {"world": right_then_left, "hits": 10, "error_px": 1.0, "name": "road_line"},
+    ]
+    result = _uncross(curves, path_xy, path_s, path_yaw)
+    for curve in result:
+        lateral = np.asarray(curve["world"], dtype=np.float64)[:, 1]
+        assert lateral.min() > 0.5 or lateral.max() < -0.5, lateral
+
+
 def test_a_far_line_is_not_the_ego_lane():
     _overlay, camera, poses, samples = _camera_and_drive()
     frames = []
@@ -418,6 +435,7 @@ if __name__ == "__main__":
     test_a_gap_in_the_paint_is_not_bridged()
     test_a_far_line_is_not_the_ego_lane()
     test_a_merge_taper_stays_one_marking()
+    test_two_markings_do_not_cross()
     test_oncoming_range_jump_keeps_the_id()
     test_oncoming_car_is_not_held_still()
     print("ok")

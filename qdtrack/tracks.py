@@ -879,6 +879,69 @@ def _merge_copies(curves, poses, project_many):
     return [curve for curve, flag in zip(curves, keep) if flag]
 
 
+def _ordered_curve(curve, path_xy, path_s, path_yaw):
+    world = np.asarray(curve["world"], dtype=np.float64)
+    station, lateral = _station_lateral(world, path_xy, path_s, path_yaw)
+    order = np.argsort(station)
+    return world[order], station[order], lateral[order]
+
+
+def _uncross(curves, path_xy, path_s, path_yaw):
+    """Keep each marking on its own side of the other.
+
+    A merge may move sideways. It may not pass through the line beside it.
+    Where two curves swap sides, the tails are exchanged so each one stays
+    on the side it had before the crossing.
+    """
+    if len(curves) < 2:
+        return curves
+    ordered = [_ordered_curve(curve, path_xy, path_s, path_yaw) for curve in curves]
+    for _ in range(6):
+        changed = False
+        for i in range(len(ordered)):
+            for j in range(i + 1, len(ordered)):
+                world_a, station_a, lateral_a = ordered[i]
+                world_b, station_b, lateral_b = ordered[j]
+                lo = max(float(station_a[0]), float(station_b[0]))
+                hi = min(float(station_a[-1]), float(station_b[-1]))
+                if hi - lo < 4.0:
+                    continue
+                grid = np.linspace(lo, hi, 24)
+                diff = np.interp(grid, station_a, lateral_a) - np.interp(grid, station_b, lateral_b)
+                sign = np.sign(diff)
+                for index in range(1, len(sign)):
+                    if sign[index] == 0:
+                        sign[index] = sign[index - 1]
+                if sign[0] == 0 or not np.any(np.diff(sign)):
+                    continue
+                flip = int(np.where(np.diff(sign))[0][0])
+                if abs(float(diff[flip])) < 0.4 or abs(float(diff[flip + 1])) < 0.4:
+                    continue
+                cut = float(grid[flip] + grid[flip + 1]) / 2.0
+                before_a = world_a[station_a < cut]
+                after_a = world_a[station_a >= cut]
+                before_b = world_b[station_b < cut]
+                after_b = world_b[station_b >= cut]
+                if min(len(before_a), len(after_a), len(before_b), len(after_b)) < 2:
+                    continue
+                # The other curve's tail is on this curve's old side.
+                ordered[i] = _ordered_curve(
+                    {"world": np.vstack([before_a, after_b])}, path_xy, path_s, path_yaw
+                )
+                ordered[j] = _ordered_curve(
+                    {"world": np.vstack([before_b, after_a])}, path_xy, path_s, path_yaw
+                )
+                changed = True
+        if not changed:
+            break
+    result = []
+    for (world, _station, _lateral), curve in zip(ordered, curves):
+        copied = dict(curve)
+        copied["world"] = np.round(world, 3).tolist()
+        result.append(copied)
+    return result
+
+
 def _select_ego(curves, path_xy, path_s, path_yaw):
     """Drop a marking that never comes near the road the car is driving.
 
@@ -941,7 +1004,7 @@ def fit_lane_curves(frames, project_many, lift) -> list[dict]:
     split = []
     for curve in curves:
         split.extend(_split_gaps(curve, path_xy, path_s, path_yaw))
-    merged = _merge_copies(split, poses, project_many)
+    merged = _uncross(_merge_copies(split, poses, project_many), path_xy, path_s, path_yaw)
     selected = _select_ego(merged, path_xy, path_s, path_yaw)
     published = []
     for curve in selected:
