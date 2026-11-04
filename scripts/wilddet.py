@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 import torch
 
-PROMPTS = ["car", "bus", "truck"]
+PROMPTS = ["car", "bus", "truck", "bicycle", "person"]
 
 
 def as_numpy(value):

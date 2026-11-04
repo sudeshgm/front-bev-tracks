@@ -245,6 +245,130 @@ def test_cylinder_lift_roundtrip():
     assert abs(point[0] - 22.0) < 1e-6 and abs(point[1] + 1.5) < 1e-6
 
 
+def _camera_and_drive(seconds=16):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    camera = overlay.CylinderCamera(600.0, 600.0, 320.0, 240.0, [1.5, 0.0, 1.4], 640, 480)
+    samples = [{"t": i * 0.2, "speed_mps": 8.0, "yaw_rate": 0.0} for i in range(seconds)]
+    return overlay, camera, integrate_ego(samples), samples
+
+
+def _pixels_of(camera, pose, lateral_at):
+    world = []
+    for station in np.arange(pose["x"] + 6.0, pose["x"] + 28.0, 1.0):
+        world.append([station, lateral_at(station)])
+    pixels = camera.project_many(world_to_ego(np.asarray(world), pose))
+    keep = np.isfinite(pixels[:, 0])
+    keep &= (pixels[:, 0] > 0) & (pixels[:, 0] < camera.width)
+    keep &= (pixels[:, 1] > camera.cy + 2) & (pixels[:, 1] < camera.height)
+    pixels = pixels[keep]
+    if len(pixels) < 6:
+        return None
+    return pixels
+
+
+def test_copies_of_one_marking_are_one_curve():
+    _overlay, camera, poses, samples = _camera_and_drive()
+    frames = []
+    for index, pose in enumerate(poses):
+        first = _pixels_of(camera, pose, lambda station: 1.75)
+        second = None if first is None else first + np.array([3.0, -1.0])
+        lines = [line for line in (first, second) if line is not None]
+        frames.append(
+            {"token": str(index), "t": samples[index]["t"], "pose": pose, "maps": {"road_line": lines, "road_edge": []}}
+        )
+    curves = fit_lane_curves(frames, camera.project_many, camera.lift)
+    assert len(curves) == 1, [(c["id"], c["hits"]) for c in curves]
+
+
+def test_a_gap_in_the_paint_is_not_bridged():
+    _overlay, camera, poses, samples = _camera_and_drive()
+    frames = []
+    for index, pose in enumerate(poses):
+        lines = []
+        for lo, hi in ((pose["x"] + 4.0, pose["x"] + 16.0), (pose["x"] + 55.0, pose["x"] + 70.0)):
+            world = [[station, 1.75] for station in np.arange(lo, hi, 1.0)]
+            pixels = camera.project_many(world_to_ego(np.asarray(world), pose))
+            keep = np.isfinite(pixels[:, 0])
+            keep &= (pixels[:, 0] > 0) & (pixels[:, 0] < camera.width)
+            keep &= (pixels[:, 1] > camera.cy + 2) & (pixels[:, 1] < camera.height)
+            pixels = pixels[keep]
+            if len(pixels) >= 6:
+                lines.append(pixels)
+        frames.append(
+            {"token": str(index), "t": samples[index]["t"], "pose": pose, "maps": {"road_line": lines, "road_edge": []}}
+        )
+    curves = fit_lane_curves(frames, camera.project_many, camera.lift)
+    for curve in curves:
+        station = np.asarray(curve["world"], dtype=np.float64)[:, 0]
+        assert not ((station < 30.0).any() and (station > 55.0).any()), (float(station.min()), float(station.max()))
+
+
+def test_a_far_line_is_not_the_ego_lane():
+    _overlay, camera, poses, samples = _camera_and_drive()
+    frames = []
+    for index, pose in enumerate(poses):
+        lines = []
+        for lateral in (1.75, 8.0):
+            pixels = _pixels_of(camera, pose, lambda station, lateral=lateral: lateral)
+            if pixels is not None:
+                lines.append(pixels)
+        frames.append(
+            {"token": str(index), "t": samples[index]["t"], "pose": pose, "maps": {"road_line": lines, "road_edge": []}}
+        )
+    curves = fit_lane_curves(frames, camera.project_many, camera.lift)
+    assert len(curves) == 1, len(curves)
+    lateral = np.asarray(curves[0]["world"], dtype=np.float64)[:, 1]
+    assert abs(float(np.median(lateral)) - 1.75) < 0.4
+
+
+def test_oncoming_range_jump_keeps_the_id():
+    def frame(token, t, pose, centres):
+        boxes, scores, labels = [], [], []
+        for x, y in centres:
+            boxes.append([x, y, 0.0, 1.8, 4.2, 1.5, 0.0, 0.0, 0.0])
+            scores.append(0.9)
+            labels.append(0)
+        return {"token": token, "t": t, "pose": pose, "boxes": boxes, "scores": scores, "labels": labels}
+
+    frames = [
+        frame("a", 0.0, {"x": 0, "y": 0, "yaw": 0}, [(30, 0)]),
+        frame("b", 0.1, {"x": 1, "y": 0, "yaw": 0}, [(21, 0), (30, 3.5)]),
+    ]
+    tracks = track_objects(frames, score_min=0.2)
+    assert len(tracks) == 2, [(t["id"], t["hits"]) for t in tracks]
+    kept = max(tracks, key=lambda t: t["hits"])
+    assert kept["hits"] == 2
+
+
+def test_oncoming_car_is_not_held_still():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    samples = [{"t": i * 0.2, "speed_mps": 10.0, "yaw_rate": 0.0} for i in range(16)]
+    poses = integrate_ego(samples)
+    track_samples = []
+    for index, pose in enumerate(poses):
+        world_x = 50.0 - index * 2.0
+        track_samples.append(
+            {
+                "token": str(index),
+                "score": 0.9,
+                "box": [world_x - pose["x"], 1.5, 0, 1.8, 4.2, 1.5, 0, 0, 0],
+                "world": [world_x, 1.5],
+            }
+        )
+    track = {"id": 1, "name": "vehicle", "label": 0, "hits": len(track_samples), "samples": track_samples}
+    overlay.smooth_world([track], poses, 0.2)
+    travelled = abs(track["samples"][-1]["world"][0] - track["samples"][0]["world"][0])
+    assert travelled > 10.0, travelled
+
+
 if __name__ == "__main__":
     test_front_camera_sees_the_road()
     test_ego_roundtrip_and_integration()
@@ -256,4 +380,9 @@ if __name__ == "__main__":
     test_split_vehicle_ids_join()
     test_pixel_lifts_through_the_camera_centre()
     test_cylinder_lift_roundtrip()
+    test_copies_of_one_marking_are_one_curve()
+    test_a_gap_in_the_paint_is_not_bridged()
+    test_a_far_line_is_not_the_ego_lane()
+    test_oncoming_range_jump_keeps_the_id()
+    test_oncoming_car_is_not_held_still()
     print("ok")
