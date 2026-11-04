@@ -116,6 +116,21 @@ def _as_detections(frame: dict, score_min: float) -> list[dict]:
     return out
 
 
+def _vehicle_cost(predicted, box, pose) -> float:
+    """Range is the noisy axis of a ground-contact point. Lateral is not.
+
+    Five pixels of box-bottom error at this camera is about ``x**2 * 5/590``
+    metres, so an oncoming car can jump several metres in range and still be
+    the same car. A shift of one lane is not.
+    """
+    ahead = world_to_ego(np.asarray(predicted, dtype=np.float64).reshape(1, 2), pose)[0]
+    along = float(box[0] - ahead[0])
+    lateral = float(box[1] - ahead[1])
+    distance = max(float(ahead[0]), 5.0)
+    sigma_along = max(2.5, distance * distance * 5.0 / 590.0)
+    return (along / sigma_along) ** 2 + (lateral / 0.8) ** 2
+
+
 def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3) -> list[dict]:
     """Nearest-first constant-velocity tracker. frames carry pose + boxes in ego.
 
@@ -137,14 +152,19 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
             if index - track["last_index"] > max_gap:
                 continue
             predicted, _dt = predictions[track_index]
-            gate = _GATE.get(track["name"], 3.0)
             for j, det in enumerate(detections):
                 if det["name"] != track["name"]:
                     continue
                 centre = ego_to_world(det["box"][None, :2], pose)[0]
-                dist = float(np.linalg.norm(centre - predicted))
-                if dist <= gate:
-                    candidates.append((dist, track_index, j, centre))
+                if track["name"] == "vehicle":
+                    cost = _vehicle_cost(predicted, det["box"], pose)
+                    if cost > 9.0:
+                        continue
+                else:
+                    cost = float(np.linalg.norm(centre - predicted))
+                    if cost > _GATE.get(track["name"], 3.0):
+                        continue
+                candidates.append((cost, track_index, j, centre))
         candidates.sort(key=lambda item: item[0])
         used_tracks: set[int] = set()
         used_dets: set[int] = set()
@@ -651,32 +671,6 @@ def _controls_from_stats(stats):
     return built
 
 
-def _compatible(stats, station, lateral):
-    window = stats[(stats[:, 0] >= station.min() - 8.0) & (stats[:, 0] <= station.max() + 8.0)]
-    if len(window) == 0:
-        gap = min(abs(float(station.min()) - float(stats[:, 0].max())), abs(float(stats[:, 0].min()) - float(station.max())))
-        if gap > 12.0:
-            return False
-        window = stats
-    return abs(float(np.median(lateral)) - float(np.median(window[:, 1]))) < _GROUP_M
-
-
-def _group_chains(chains):
-    """Group chains whose ground seeds lie on the same marking. Seeds only."""
-    groups = []
-    for chain in chains:
-        placed = False
-        for group in groups:
-            if _compatible(group["stats"], chain["station"], chain["lateral"]):
-                group["chains"].append(chain)
-                group["stats"] = np.concatenate([group["stats"], chain["stats"]], axis=0)
-                placed = True
-                break
-        if not placed:
-            groups.append({"chains": [chain], "stats": chain["stats"]})
-    return groups
-
-
 def _fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames):
     fitted = []
     for control_s, lateral, piece in _controls_from_stats(group["stats"]):
@@ -720,15 +714,203 @@ def _fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames):
     return fitted
 
 
+def _median_pixel_distance(pixels, worlds, pose, project_many) -> float:
+    if not worlds:
+        return 1e6
+    distances = np.min(
+        [_pixel_distance(pixels, world, pose, project_many) for world in worlds],
+        axis=0,
+    )
+    return float(np.median(distances))
+
+
+def _stations_overlap(chain, stats) -> bool:
+    return not (chain["station"].max() < stats[:, 0].min() or chain["station"].min() > stats[:, 0].max())
+
+
+def _same_marking(chain, group, worlds, poses, project_many) -> bool:
+    """A chain joins a marking when it lands on that marking's pixels.
+
+    Lifted metres are only a way to extend a line into a frame the curve does
+    not reach yet. Two edges a metre apart must not become one curve.
+    """
+    if worlds:
+        distance = _median_pixel_distance(chain["pixels"], worlds, poses[chain["index"]], project_many)
+        if distance <= _PIXEL_GATE:
+            return True
+        if _stations_overlap(chain, group["stats"]) and distance < 64.0:
+            return False
+    lateral_gap = abs(float(np.median(chain["lateral"])) - float(np.median(group["stats"][:, 1])))
+    if _stations_overlap(chain, group["stats"]):
+        return not worlds and lateral_gap < 0.8
+    gap = min(
+        abs(float(chain["station"].min()) - float(group["stats"][:, 0].max())),
+        abs(float(group["stats"][:, 0].min()) - float(chain["station"].max())),
+    )
+    return gap <= 8.0 and lateral_gap < 0.8
+
+
+def _grow_groups(chains, poses, path_xy, path_s, path_yaw, project_many, frames):
+    pending = sorted(chains, key=lambda chain: (-len(chain["pixels"]), chain["index"]))
+    used = set()
+    groups = []
+    for seed in pending:
+        if id(seed) in used:
+            continue
+        group = {"chains": [seed], "stats": np.asarray(seed["stats"], dtype=np.float64)}
+        used.add(id(seed))
+        worlds = []
+        grew = True
+        while grew:
+            grew = False
+            for other in pending:
+                if id(other) in used:
+                    continue
+                if not _same_marking(other, group, worlds, poses, project_many):
+                    continue
+                group["chains"].append(other)
+                group["stats"] = np.concatenate([group["stats"], other["stats"]], axis=0)
+                used.add(id(other))
+                grew = True
+            if not grew:
+                break
+            fitted = _fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames)
+            worlds = [np.asarray(item["world"], dtype=np.float64) for item in fitted]
+            if not worlds:
+                continue
+            confirmed = []
+            for chain in group["chains"]:
+                distance = _median_pixel_distance(
+                    chain["pixels"], worlds, poses[chain["index"]], project_many
+                )
+                if distance <= _PIXEL_GATE:
+                    confirmed.append(chain)
+            if confirmed and len(confirmed) != len(group["chains"]):
+                group["chains"] = confirmed
+                group["stats"] = np.concatenate([chain["stats"] for chain in confirmed], axis=0)
+                fitted = _fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames)
+                worlds = [np.asarray(item["world"], dtype=np.float64) for item in fitted]
+        groups.append(group)
+    return groups
+
+
+def _split_gaps(curve, path_xy, path_s, path_yaw):
+    """Drop the part of a curve that crosses road with no paint under it."""
+    members = curve.get("_members") or []
+    world = np.asarray(curve["world"], dtype=np.float64)
+    if not members or len(world) < 2:
+        return [curve]
+    observed = np.concatenate([chain["station"] for chain in members])
+    station, _lateral = _station_lateral(world, path_xy, path_s, path_yaw)
+    supported = np.array([float(np.min(np.abs(observed - value))) <= 4.0 for value in station])
+    runs = []
+    start = None
+    for index, flag in enumerate(list(supported) + [False]):
+        if flag and start is None:
+            start = index
+        if not flag and start is not None:
+            runs.append((start, index))
+            start = None
+    pieces = []
+    for lo, hi in runs:
+        piece = world[lo:hi]
+        if len(piece) < 2:
+            continue
+        piece_s, _piece_l = _station_lateral(piece, path_xy, path_s, path_yaw)
+        if float(piece_s.max() - piece_s.min()) < _MIN_SPAN_M:
+            continue
+        copied = dict(curve)
+        copied["world"] = np.round(piece, 3).tolist()
+        pieces.append(copied)
+    return pieces
+
+
+def _same_paint(left, right, poses, project_many) -> bool:
+    members = left.get("_members") or []
+    world = np.asarray(right["world"], dtype=np.float64)
+    if not members:
+        return False
+    distances = [
+        _pixel_distance(chain["pixels"], world, poses[chain["index"]], project_many) for chain in members
+    ]
+    return float(np.median(np.concatenate(distances))) <= _PIXEL_GATE
+
+
+def _merge_copies(curves, poses, project_many):
+    """Two curves on the same dashes are one marking."""
+    keep = [True] * len(curves)
+    for i in range(len(curves)):
+        if not keep[i]:
+            continue
+        for j in range(i + 1, len(curves)):
+            if not keep[j]:
+                continue
+            if not (
+                _same_paint(curves[i], curves[j], poses, project_many)
+                or _same_paint(curves[j], curves[i], poses, project_many)
+            ):
+                continue
+            left_key = (curves[i]["hits"], -curves[i]["error_px"])
+            right_key = (curves[j]["hits"], -curves[j]["error_px"])
+            drop = j if left_key >= right_key else i
+            keep[drop] = False
+            if drop == i:
+                break
+    return [curve for curve, flag in zip(curves, keep) if flag]
+
+
+def _select_ego(curves, path_xy, path_s, path_yaw):
+    """The lane the car is in, plus the neighbour when a lane splits or the car changes lane."""
+    described = []
+    for curve in curves:
+        world = np.asarray(curve["world"], dtype=np.float64)
+        station, lateral = _station_lateral(world, path_xy, path_s, path_yaw)
+        described.append((curve, station, lateral, float(np.median(lateral))))
+    keep = set()
+
+    def nearest(side):
+        chosen = None
+        for item in described:
+            if item[3] * side <= 0:
+                continue
+            if abs(item[3]) > 5.0:
+                continue
+            if chosen is None or abs(item[3]) < abs(chosen[3]):
+                chosen = item
+        return chosen
+
+    for side in (1.0, -1.0):
+        chosen = nearest(side)
+        if chosen is not None:
+            keep.add(id(chosen[0]))
+    for curve, _station, lateral, _median in described:
+        if float(lateral.min()) < -0.4 and float(lateral.max()) > 0.4:
+            keep.add(id(curve))
+    for curve, station, lateral, _median in described:
+        if id(curve) in keep:
+            continue
+        for other, other_s, other_l, _other_median in described:
+            if id(other) not in keep:
+                continue
+            lo = max(float(station.min()), float(other_s.min()))
+            hi = min(float(station.max()), float(other_s.max()))
+            if hi - lo < 8.0:
+                continue
+            grid = np.linspace(lo, hi, 8)
+            gap = np.abs(np.interp(grid, station, lateral) - np.interp(grid, other_s, other_l))
+            if float(gap.min()) < 1.2 and float(gap.max()) > 2.2:
+                keep.add(id(curve))
+                break
+    return [curve for curve, _s, _l, _m in described if id(curve) in keep]
+
+
 def fit_lane_curves(frames, project_many, lift) -> list[dict]:
     """One ground curve per marking, fitted so its projection hits the pixels.
 
-    maps['road_line'] is a list of polylines in pixels, (u, v). The lift is
-    used once, to decide which chains are the same marking and to place the
-    first control points. A control point then moves to reduce the pixel
-    error of every frame that sees it, so a near pixel and a far pixel of the
-    same marking pull the same curve. A chain that does not lie on the
-    projected curve is not part of it.
+    A chain joins a curve only when its pixels land on that curve. A stretch
+    with no paint under it is removed, and two curves that cover the same
+    dashes are one marking. What is returned is the lane the car is in. A
+    neighbour is kept when the car changes lane or the two lines diverge.
     """
     if not frames:
         return []
@@ -760,39 +942,23 @@ def fit_lane_curves(frames, project_many, lift) -> list[dict]:
             )
     if not chains:
         return []
-
-    def produce(groups):
-        found = []
-        for group in groups:
-            if len({chain["index"] for chain in group["chains"]}) < _MIN_FRAMES:
-                continue
-            found.extend(_fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames))
-        return found
-
-    curves = produce(_group_chains(chains))
-    if curves:
-        regrouped = []
-        used = set()
-        for curve in curves:
-            members = curve.get("_members") or []
-            if len({chain["index"] for chain in members}) < _MIN_FRAMES:
-                continue
-            regrouped.append(
-                {"chains": members, "stats": np.concatenate([chain["stats"] for chain in members], axis=0)}
-            )
-            used.update(id(chain) for chain in members)
-        leftovers = [chain for chain in chains if id(chain) not in used]
-        regrouped.extend(_group_chains(leftovers))
-        refined = produce(regrouped)
-        if refined:
-            curves = refined
-
-    published = []
+    curves = []
+    for group in _grow_groups(chains, poses, path_xy, path_s, path_yaw, project_many, frames):
+        if len({chain["index"] for chain in group["chains"]}) < _MIN_FRAMES:
+            continue
+        curves.extend(_fit_group(group, poses, path_xy, path_s, path_yaw, project_many, frames))
+    split = []
     for curve in curves:
+        split.extend(_split_gaps(curve, path_xy, path_s, path_yaw))
+    merged = _merge_copies(split, poses, project_many)
+    selected = _select_ego(merged, path_xy, path_s, path_yaw)
+    published = []
+    for curve in selected:
         curve.pop("_members", None)
         curve["id"] = len(published) + 1
         published.append(curve)
     return published
+
 
 def merge_object_tracks(tracks: list[dict], token_time: dict[str, float]) -> list[dict]:
     """Join tracks that are the same object seen twice.

@@ -315,13 +315,15 @@ def kalman_positions(track, poses, frame_dt):
 
 
 def smooth_world(tracks, poses, frame_dt):
-    """Hold a car whose sideways motion is the viewing angle, not the car.
+    """Hold a car that is still. Do not decide that from how fast the range closes.
 
     The bottom of the box is the rear bumper from behind and a side corner
     once the car is abreast. If that sideways motion follows the viewing angle
     and the car has not moved along the road, keep the head-on position.
-    A car that is closing at the ego speed is parked and is held the same way.
-    Anything else keeps the Kalman speed.
+    A car whose fitted world speed is about zero is held the same way. An
+    oncoming car closes faster than the ego vehicle drives, but the measured
+    range is compressed, so a range test would freeze it. Its world speed is
+    not zero, and that is what is kept.
     """
     for track in tracks:
         worlds = np.array([sample["world"] for sample in track["samples"]], dtype=np.float64)
@@ -338,15 +340,18 @@ def smooth_world(tracks, poses, frame_dt):
         lateral = -offset[:, 0] * np.sin(yaw) + offset[:, 1] * np.cos(yaw)
         correlation = 0.0 if lateral.std() < 1e-6 else float(np.corrcoef(bearings, lateral)[0, 1])
         passing = len(worlds) >= 8 and abs(correlation) > 0.8 and lateral.std() > 0.8 and along.std() < 8.0
-        first, last = track["samples"][0], track["samples"][-1]
-        start, end = int(first["token"]), int(last["token"])
-        driven = float(np.hypot(poses[end]["x"] - poses[start]["x"], poses[end]["y"] - poses[start]["y"]))
-        closing = float(first["box"][0] - last["box"][0])
-        parked = len(worlds) >= 8 and driven > 5 and abs(closing - driven) < max(6.0, 0.5 * driven)
-        if passing or parked:
+        path = kalman_positions(track, poses, frame_dt)
+        speed = 0.0
+        if len(path) >= 2:
+            step = np.linalg.norm(np.diff(path, axis=0), axis=1)
+            elapsed = []
+            for left, right in zip(track["samples"], track["samples"][1:]):
+                elapsed.append(max(int(right["token"]) - int(left["token"]), 1) * frame_dt)
+            speed = float(np.median(step / np.maximum(elapsed, 1e-3)))
+        if passing:
             path = np.repeat(reference.reshape(1, 2), len(worlds), axis=0)
-        else:
-            path = kalman_positions(track, poses, frame_dt)
+        elif speed < 0.8:
+            path = np.repeat(np.median(path, axis=0).reshape(1, 2), len(worlds), axis=0)
         for sample, point in zip(track["samples"], path):
             sample["world"] = [float(point[0]), float(point[1])]
 
@@ -578,7 +583,7 @@ def colour(track_id):
     return int(bgr[0]), int(bgr[1]), int(bgr[2])
 
 
-def draw_bev(objects, lanes, pose, width, height, now, wild=None):
+def draw_bev(objects, lanes, pose, width, height, now, wild=None, camera=None):
     scale = 12.0
     panel = np.full((height, width, 3), 28, np.uint8)
     origin_u = width // 2
@@ -596,16 +601,39 @@ def draw_bev(objects, lanes, pose, width, height, now, wild=None):
         if track["hits"] < 4:
             continue
         local = world_to_ego(np.asarray(track["world"], dtype=np.float64), pose)
-        pts = []
-        for point in local:
+        if camera is not None:
+            projected = camera.project_many(local)
+            visible = (
+                np.isfinite(projected[:, 0])
+                & (projected[:, 0] > -40)
+                & (projected[:, 0] < camera.width + 40)
+                & (projected[:, 1] > -40)
+                & (projected[:, 1] < camera.height + 40)
+            )
+        else:
+            visible = np.ones(len(local), dtype=bool)
+        segments = []
+        current = []
+        for point, show in zip(local, visible):
+            if not show:
+                if len(current) >= 2:
+                    segments.append(current)
+                current = []
+                continue
             u, v = screen(point)
             if -40 <= u < width + 40 and -40 <= v < height + 40:
-                pts.append((u, v))
-        if len(pts) >= 2:
-            paint = (40, 140, 255) if track.get("name") == "road_edge" else (80, 210, 90)
-            cv2.polylines(panel, [np.asarray(pts, np.int32)], False, paint, 2)
+                current.append((u, v))
+            else:
+                if len(current) >= 2:
+                    segments.append(current)
+                current = []
+        if len(current) >= 2:
+            segments.append(current)
+        paint = (40, 140, 255) if track.get("name") == "road_edge" else (80, 210, 90)
+        for current in segments:
+            cv2.polylines(panel, [np.asarray(current, np.int32)], False, paint, 2)
     for track in objects:
-        if track["hits"] < 3 or track["name"] != "vehicle":
+        if track["hits"] < 3 or track["name"] not in ("vehicle", "bicycle", "pedestrian"):
             continue
         trail = []
         last_t = None
@@ -711,7 +739,7 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
             if centre and guess is not None:
                 label = f"{label} {centre[0] - guess[0]:+.1f},{centre[1] - guess[1]:+.1f}"
             cv2.putText(image, label, (x1, min(camera.height - 4, y2 + 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
-        panel = draw_bev(objects, lanes, pose, 640, camera.height, index, wild)
+        panel = draw_bev(objects, lanes, pose, 640, camera.height, index, wild, camera)
         writer.stdin.write(np.concatenate([image, panel], axis=1).tobytes())
         if index % 30 == 0:
             print("render", index, flush=True)
@@ -774,7 +802,7 @@ def main():
         )
         source = open_frames(args.video, args.frames, camera, args.repeat)
     packed = build_frames(samples, poses, cache, camera)
-    objects = track_objects(packed, score_min=0.4, max_gap=8)
+    objects = track_objects(packed, score_min=0.4, max_gap=max(8, int(round(1.0 / frame_dt))))
     smooth_world(objects, poses, frame_dt)
     lanes = fit_lane_curves(packed, camera.project_many, camera.lift)
     print(
