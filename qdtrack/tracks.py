@@ -742,12 +742,12 @@ def _same_marking(chain, group, worlds, poses, project_many) -> bool:
             return False
     lateral_gap = abs(float(np.median(chain["lateral"])) - float(np.median(group["stats"][:, 1])))
     if _stations_overlap(chain, group["stats"]):
-        return not worlds and lateral_gap < 0.8
+        return not worlds and lateral_gap < _GROUP_M
     gap = min(
         abs(float(chain["station"].min()) - float(group["stats"][:, 0].max())),
         abs(float(group["stats"][:, 0].min()) - float(chain["station"].max())),
     )
-    return gap <= 8.0 and lateral_gap < 0.8
+    return gap <= 8.0 and lateral_gap < _GROUP_M
 
 
 def _grow_groups(chains, poses, path_xy, path_s, path_yaw, project_many, frames):
@@ -860,48 +860,19 @@ def _merge_copies(curves, poses, project_many):
 
 
 def _select_ego(curves, path_xy, path_s, path_yaw):
-    """The lane the car is in, plus the neighbour when a lane splits or the car changes lane."""
-    described = []
+    """Drop a marking that never comes near the road the car is driving.
+
+    The nearest line on each side is not enough: the other lane, and a merge,
+    are real markings. A line that stays more than a couple of lanes out
+    (a sidewalk, the far curb) is the one that goes.
+    """
+    kept = []
     for curve in curves:
         world = np.asarray(curve["world"], dtype=np.float64)
-        station, lateral = _station_lateral(world, path_xy, path_s, path_yaw)
-        described.append((curve, station, lateral, float(np.median(lateral))))
-    keep = set()
-
-    def nearest(side):
-        chosen = None
-        for item in described:
-            if item[3] * side <= 0:
-                continue
-            if abs(item[3]) > 5.0:
-                continue
-            if chosen is None or abs(item[3]) < abs(chosen[3]):
-                chosen = item
-        return chosen
-
-    for side in (1.0, -1.0):
-        chosen = nearest(side)
-        if chosen is not None:
-            keep.add(id(chosen[0]))
-    for curve, _station, lateral, _median in described:
-        if float(lateral.min()) < -0.4 and float(lateral.max()) > 0.4:
-            keep.add(id(curve))
-    for curve, station, lateral, _median in described:
-        if id(curve) in keep:
-            continue
-        for other, other_s, other_l, _other_median in described:
-            if id(other) not in keep:
-                continue
-            lo = max(float(station.min()), float(other_s.min()))
-            hi = min(float(station.max()), float(other_s.max()))
-            if hi - lo < 8.0:
-                continue
-            grid = np.linspace(lo, hi, 8)
-            gap = np.abs(np.interp(grid, station, lateral) - np.interp(grid, other_s, other_l))
-            if float(gap.min()) < 1.2 and float(gap.max()) > 2.2:
-                keep.add(id(curve))
-                break
-    return [curve for curve, _s, _l, _m in described if id(curve) in keep]
+        _station, lateral = _station_lateral(world, path_xy, path_s, path_yaw)
+        if float(np.min(np.abs(lateral))) < 8.0:
+            kept.append(curve)
+    return kept
 
 
 def fit_lane_curves(frames, project_many, lift) -> list[dict]:
@@ -909,8 +880,8 @@ def fit_lane_curves(frames, project_many, lift) -> list[dict]:
 
     A chain joins a curve only when its pixels land on that curve. A stretch
     with no paint under it is removed, and two curves that cover the same
-    dashes are one marking. What is returned is the lane the car is in. A
-    neighbour is kept when the car changes lane or the two lines diverge.
+    dashes are one marking. A marking that never comes within two lanes of
+    the car is not drawn. The neighbour lane and a merge are kept.
     """
     if not frames:
         return []

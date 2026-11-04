@@ -312,7 +312,7 @@ def test_a_far_line_is_not_the_ego_lane():
     frames = []
     for index, pose in enumerate(poses):
         lines = []
-        for lateral in (1.75, 8.0):
+        for lateral in (1.75, 5.0, 14.0):
             pixels = _pixels_of(camera, pose, lambda station, lateral=lateral: lateral)
             if pixels is not None:
                 lines.append(pixels)
@@ -320,9 +320,9 @@ def test_a_far_line_is_not_the_ego_lane():
             {"token": str(index), "t": samples[index]["t"], "pose": pose, "maps": {"road_line": lines, "road_edge": []}}
         )
     curves = fit_lane_curves(frames, camera.project_many, camera.lift)
-    assert len(curves) == 1, len(curves)
-    lateral = np.asarray(curves[0]["world"], dtype=np.float64)[:, 1]
-    assert abs(float(np.median(lateral)) - 1.75) < 0.4
+    laterals = sorted(round(float(np.median(np.asarray(curve["world"])[:, 1])), 1) for curve in curves)
+    assert laterals == [1.8, 5.0] or all(abs(v - 1.75) < 0.4 or abs(v - 5.0) < 0.4 for v in laterals), laterals
+    assert len(curves) == 2, laterals
 
 
 def test_oncoming_range_jump_keeps_the_id():
