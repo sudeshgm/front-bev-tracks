@@ -307,6 +307,40 @@ def test_a_gap_in_the_paint_is_not_bridged():
         assert not ((station < 30.0).any() and (station > 55.0).any()), (float(station.min()), float(station.max()))
 
 
+def test_a_merge_taper_stays_one_marking():
+    _overlay, camera, poses, samples = _camera_and_drive()
+    frames = []
+    for index, pose in enumerate(poses):
+        lines = []
+        near_end = pose["x"] + 14.0
+        far_start = pose["x"] + 18.0
+
+        def opening(station, far_start=far_start):
+            return 1.9 + 0.18 * (station - far_start)
+
+        for lo, hi, lateral_at in (
+            (pose["x"] + 4.0, near_end, lambda station: 1.75),
+            (far_start, pose["x"] + 36.0, opening),
+        ):
+            world = [[station, lateral_at(station)] for station in np.arange(lo, hi, 1.0)]
+            pixels = camera.project_many(world_to_ego(np.asarray(world, dtype=np.float64), pose))
+            keep = np.isfinite(pixels[:, 0])
+            keep &= (pixels[:, 0] > 0) & (pixels[:, 0] < camera.width)
+            keep &= (pixels[:, 1] > camera.cy + 2) & (pixels[:, 1] < camera.height)
+            pixels = pixels[keep]
+            if len(pixels) >= 6:
+                lines.append(pixels)
+        frames.append(
+            {"token": str(index), "t": samples[index]["t"], "pose": pose, "maps": {"road_line": lines, "road_edge": []}}
+        )
+    curves = fit_lane_curves(frames, camera.project_many, camera.lift)
+    spanned = []
+    for curve in curves:
+        lateral = np.asarray(curve["world"], dtype=np.float64)[:, 1]
+        spanned.append((round(float(lateral.min()), 2), round(float(lateral.max()), 2)))
+    assert any(lo < 2.2 and hi > 4.0 for lo, hi in spanned), spanned
+
+
 def test_a_far_line_is_not_the_ego_lane():
     _overlay, camera, poses, samples = _camera_and_drive()
     frames = []
@@ -383,6 +417,7 @@ if __name__ == "__main__":
     test_copies_of_one_marking_are_one_curve()
     test_a_gap_in_the_paint_is_not_bridged()
     test_a_far_line_is_not_the_ego_lane()
+    test_a_merge_taper_stays_one_marking()
     test_oncoming_range_jump_keeps_the_id()
     test_oncoming_car_is_not_held_still()
     print("ok")

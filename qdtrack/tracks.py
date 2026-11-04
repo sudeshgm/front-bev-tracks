@@ -728,11 +728,29 @@ def _stations_overlap(chain, stats) -> bool:
     return not (chain["station"].max() < stats[:, 0].min() or chain["station"].min() > stats[:, 0].max())
 
 
+def _facing_lateral(chain, stats) -> float:
+    """Lateral gap where two pieces meet, not the gap between their middles.
+
+    A merge moves sideways along its length, so the middles can be a lane
+    apart while the ends that face each other are the same paint.
+    """
+    if chain["station"].max() < stats[:, 0].min():
+        chain_lat = float(chain["lateral"][int(np.argmax(chain["station"]))])
+        other_lat = float(stats[int(np.argmin(stats[:, 0])), 1])
+    elif chain["station"].min() > stats[:, 0].max():
+        chain_lat = float(chain["lateral"][int(np.argmin(chain["station"]))])
+        other_lat = float(stats[int(np.argmax(stats[:, 0])), 1])
+    else:
+        return abs(float(np.median(chain["lateral"])) - float(np.median(stats[:, 1])))
+    return abs(chain_lat - other_lat)
+
+
 def _same_marking(chain, group, worlds, poses, project_many) -> bool:
     """A chain joins a marking when it lands on that marking's pixels.
 
     Lifted metres are only a way to extend a line into a frame the curve does
-    not reach yet. Two edges a metre apart must not become one curve.
+    not reach yet. The extension looks at the ends that face each other, so a
+    taper stays one marking. Two edges a metre apart still do not.
     """
     if worlds:
         distance = _median_pixel_distance(chain["pixels"], worlds, poses[chain["index"]], project_many)
@@ -740,14 +758,16 @@ def _same_marking(chain, group, worlds, poses, project_many) -> bool:
             return True
         if _stations_overlap(chain, group["stats"]) and distance < 64.0:
             return False
+    if not _stations_overlap(chain, group["stats"]):
+        gap = min(
+            abs(float(chain["station"].min()) - float(group["stats"][:, 0].max())),
+            abs(float(group["stats"][:, 0].min()) - float(chain["station"].max())),
+        )
+        # A dashed line has a gap of about this size. A hole across empty
+        # road is longer, and the bridge test covers that.
+        return gap <= 12.0 and _facing_lateral(chain, group["stats"]) < _GROUP_M
     lateral_gap = abs(float(np.median(chain["lateral"])) - float(np.median(group["stats"][:, 1])))
-    if _stations_overlap(chain, group["stats"]):
-        return not worlds and lateral_gap < _GROUP_M
-    gap = min(
-        abs(float(chain["station"].min()) - float(group["stats"][:, 0].max())),
-        abs(float(group["stats"][:, 0].min()) - float(chain["station"].max())),
-    )
-    return gap <= 8.0 and lateral_gap < _GROUP_M
+    return not worlds and lateral_gap < _GROUP_M
 
 
 def _grow_groups(chains, poses, path_xy, path_s, path_yaw, project_many, frames):
