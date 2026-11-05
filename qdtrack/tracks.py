@@ -40,6 +40,11 @@ _GATE = {
     "generic_object": 3.0,
 }
 
+# A coast longer than this lands on the car in front and the two become one
+# track. A brief miss can still rejoin. The two-second tail is predicted
+# points only, and it does not pick up a new detection.
+_COAST_S = 0.5
+
 
 def _yaw_of(pose: dict) -> float:
     return float(pose["yaw"])
@@ -150,6 +155,8 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
         candidates = []
         for track_index, track in enumerate(tracks):
             if index - track["last_index"] > max_gap:
+                continue
+            if frame["t"] - track["last_t"] > _COAST_S:
                 continue
             predicted, _dt = predictions[track_index]
             for j, det in enumerate(detections):
