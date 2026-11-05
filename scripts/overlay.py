@@ -279,23 +279,29 @@ def kalman_positions(track, poses, frame_dt):
     covariances = []
     motions = []
     noises = []
+    sigma_a = 3.0
     for index in range(count):
         dt = steps[index]
         motion = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])
-        cosine, sine = np.cos(headings[index]), np.sin(headings[index])
-        # A car brakes along the road. It does not accelerate sideways. The
-        # sideways motion of a close box is the bottom of the box sliding
-        # across the car, and following it turns the heading.
-        along_accel = np.array([0.5 * dt * dt * cosine, 0.5 * dt * dt * sine, dt * cosine, dt * sine])
-        side_accel = np.array([-0.5 * dt * dt * sine, 0.5 * dt * dt * cosine, -dt * sine, dt * cosine])
-        noise = 3.0 ** 2 * np.outer(along_accel, along_accel) + 0.3 ** 2 * np.outer(side_accel, side_accel)
+        noise = sigma_a ** 2 * np.array(
+            [
+                [dt ** 4 / 4, 0, dt ** 3 / 2, 0],
+                [0, dt ** 4 / 4, 0, dt ** 3 / 2],
+                [dt ** 3 / 2, 0, dt ** 2, 0],
+                [0, dt ** 3 / 2, 0, dt ** 2],
+            ]
+        )
         state = motion @ state
         covariance = motion @ covariance @ motion.T + noise
+        cosine, sine = np.cos(headings[index]), np.sin(headings[index])
+        # Far away the range is a rough guess, so the filter leans on its
+        # speed. Up close the detection is the better measurement, and an
+        # approaching car must be allowed to arrive instead of being left
+        # several metres short.
         distance = abs(float(track["samples"][index]["box"][0])) if track["samples"][index].get("box") else 20.0
-        sigma_along = min(6.0, max(0.8, distance * distance * 5.0 / 590.0))
-        sigma_side = 2.0
+        sigma_along = min(6.0, max(1.0, distance * distance * 5.0 / 590.0))
         axes = np.array(
-            [[cosine * sigma_along, -sine * sigma_side], [sine * sigma_along, cosine * sigma_side]]
+            [[cosine * sigma_along, -sine * 0.5], [sine * sigma_along, cosine * 0.5]]
         )
         measure = np.array([[1.0, 0, 0, 0], [0, 1.0, 0, 0]])
         innovation = measurements[index] - measure @ state
