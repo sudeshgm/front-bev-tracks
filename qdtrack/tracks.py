@@ -40,10 +40,10 @@ _GATE = {
     "generic_object": 3.0,
 }
 
-# A coast longer than this lands on the car in front and the two become one
-# track. A brief miss can still rejoin. The two-second tail is predicted
-# points only, and it does not pick up a new detection.
-_COAST_S = 0.5
+# A missed detection can rejoin for about a second. Longer than that, the
+# track ends. A sideways jump is rejected separately: the car beside this
+# one can sit where the old speed predicts, with no gap at all.
+_COAST_S = 1.0
 
 
 def _yaw_of(pose: dict) -> float:
@@ -164,6 +164,13 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
                     continue
                 centre = ego_to_world(det["box"][None, :2], pose)[0]
                 if track["name"] == "vehicle":
+                    previous = world_to_ego(np.asarray(track["world"], dtype=np.float64).reshape(1, 2), pose)[0]
+                    elapsed = max(frame["t"] - track["last_t"], 1e-3)
+                    sideways = abs(float(det["box"][1]) - float(previous[1]))
+                    # Two metres in one frame at this camera is a different car.
+                    # A real car does not move a lane sideways between frames.
+                    if sideways > min(2.0 * max(elapsed / 0.07, 1.0), 3.5):
+                        continue
                     cost = _vehicle_cost(predicted, det["box"], pose)
                     if cost > 9.0:
                         continue
