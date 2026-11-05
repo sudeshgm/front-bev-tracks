@@ -279,7 +279,7 @@ def kalman_positions(track, poses, frame_dt):
     covariances = []
     motions = []
     noises = []
-    sigma_a = 1.5
+    sigma_a = 3.0
     for index in range(count):
         dt = steps[index]
         motion = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])
@@ -294,7 +294,15 @@ def kalman_positions(track, poses, frame_dt):
         state = motion @ state
         covariance = motion @ covariance @ motion.T + noise
         cosine, sine = np.cos(headings[index]), np.sin(headings[index])
-        axes = np.array([[cosine * 2.5, -sine * 0.6], [sine * 2.5, cosine * 0.6]])
+        # Far away the range is a rough guess, so the filter leans on its
+        # speed. Up close the detection is the better measurement, and an
+        # approaching car must be allowed to arrive instead of being left
+        # several metres short.
+        distance = abs(float(track["samples"][index]["box"][0])) if track["samples"][index].get("box") else 20.0
+        sigma_along = min(6.0, max(1.0, distance * distance * 5.0 / 590.0))
+        axes = np.array(
+            [[cosine * sigma_along, -sine * 0.5], [sine * sigma_along, cosine * 0.5]]
+        )
         measure = np.array([[1.0, 0, 0, 0], [0, 1.0, 0, 0]])
         innovation = measurements[index] - measure @ state
         gain_scale = measure @ covariance @ measure.T + axes @ axes.T

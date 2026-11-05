@@ -392,28 +392,73 @@ def test_a_gap_keeps_the_speed_and_the_track_continues():
             "labels": labels,
         }
 
-    # Seen from frame 8. A 0.2 s miss stays the same track. The detection 0.8 s
-    # later sits where the old speed predicts, which is where the car in front
-    # would be, and it must not inherit the id. The first track still continues
-    # as predicted points.
-    seen = [(1.6, 15.0, 0.0), (1.8, 15.0, 1.6), (2.0, 15.0, 3.2), (2.8, 15.0, 9.6)]
+    # Seen from frame 8. A 0.6 s gap in the same lane is still this car.
+    seen = [(1.6, 20.0), (1.8, 18.0), (2.0, 16.0), (2.6, 10.0)]
     frames = []
-    for index in range(20):
+    for index in range(16):
         t = round(index * 0.2, 3)
-        detection = [(15.0, y) for st, _x, y in seen if abs(st - t) < 1e-6]
+        detection = [(x, 0.0) for st, x in seen if abs(st - t) < 1e-6]
         frames.append(frame(str(index), t, 0.0, 0.0, detection))
-    tracks = track_objects(frames, score_min=0.2, max_gap=8)
-    assert len(tracks) == 2, [(track["id"], track["hits"]) for track in tracks]
-    first = min(tracks, key=lambda track: int(track["samples"][0]["token"]))
-    assert first["hits"] == 3
-    measured = {sample["token"] for sample in first["samples"] if not sample.get("predicted")}
-    assert "14" not in measured
-    predicted = [sample for sample in first["samples"] if sample.get("predicted")]
-    assert len(predicted) >= 4, len(predicted)
-    face = first["samples"][0].get("face")
+    tracks = track_objects(frames, score_min=0.2, max_gap=15)
+    assert len(tracks) == 1, [(track["id"], track["hits"]) for track in tracks]
+    assert tracks[0]["hits"] == 4
+    face = tracks[0]["samples"][0].get("face")
     assert face is not None
-    centre = first["samples"][0]["world"]
+    centre = tracks[0]["samples"][0]["world"]
     assert abs(centre[0]) + abs(centre[1]) > abs(face[0]) + abs(face[1])
+
+
+def test_a_sideways_jump_is_a_different_car():
+    def frame(token, t, centres):
+        boxes, scores, labels = [], [], []
+        for x, y in centres:
+            boxes.append([x, y, 0.0, 1.8, 4.2, 1.5, 0.0, 0.0, 0.0])
+            scores.append(0.9)
+            labels.append(0)
+        return {
+            "token": token,
+            "t": t,
+            "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+            "boxes": boxes,
+            "scores": scores,
+            "labels": labels,
+        }
+
+    frames = []
+    for index in range(8):
+        y = 3.6 if index < 5 else 9.6
+        frames.append(frame(str(index), round(index * 0.067, 3), [(8.0, y)]))
+    tracks = track_objects(frames, score_min=0.2, max_gap=15)
+    first = min(tracks, key=lambda track: int(track["samples"][0]["token"]))
+    followed = [sample["token"] for sample in first["samples"] if not sample.get("predicted")]
+    assert followed == ["0", "1", "2", "3", "4"], followed
+    assert len(tracks) == 2
+
+
+def test_a_close_approach_is_not_left_behind():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    poses = [{"x": index * 0.1, "y": 0.0, "yaw": 0.0} for index in range(40)]
+    samples = []
+    car_x = 50.0
+    for index, pose in enumerate(poses):
+        car_x -= 0.3 if index < 20 else 1.4
+        samples.append(
+            {
+                "token": str(index),
+                "score": 0.9,
+                "box": [car_x - pose["x"], 2.0, 0, 1.8, 4.2, 1.5, 0, 0, 0],
+                "world": [car_x, 2.0],
+            }
+        )
+    last = samples[-1]["world"][0]
+    track = {"id": 1, "name": "vehicle", "label": 0, "hits": len(samples), "samples": samples}
+    overlay.smooth_world([track], poses, 0.067)
+    end = track["samples"][-1]["world"][0]
+    assert abs(end - last) < 2.5, (end, last)
 
 
 def test_oncoming_range_jump_keeps_the_id():
@@ -478,5 +523,7 @@ if __name__ == "__main__":
     test_two_markings_do_not_cross()
     test_oncoming_range_jump_keeps_the_id()
     test_a_gap_keeps_the_speed_and_the_track_continues()
+    test_a_sideways_jump_is_a_different_car()
+    test_a_close_approach_is_not_left_behind()
     test_oncoming_car_is_not_held_still()
     print("ok")
