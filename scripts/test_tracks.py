@@ -392,12 +392,11 @@ def test_a_gap_keeps_the_speed_and_the_track_continues():
             "labels": labels,
         }
 
-    # A car crosses in front at 8 m/s. The box speed is zero. After three
-    # hits it leaves the image for 0.6 s and is seen again, then the clip
-    # continues with no detection.
-    seen = [(0.0, 15.0, 0.0), (0.2, 15.0, 1.6), (0.4, 15.0, 3.2), (1.0, 15.0, 8.0)]
+    # The car is first seen at frame 8, so a sample index and a frame index
+    # are not the same number. The clip continues after the last detection.
+    seen = [(1.6, 15.0, 0.0), (1.8, 15.0, 1.6), (2.0, 15.0, 3.2), (2.6, 15.0, 8.0)]
     frames = []
-    for index in range(12):
+    for index in range(20):
         t = round(index * 0.2, 3)
         detection = [(15.0, y) for st, _x, y in seen if abs(st - t) < 1e-6]
         frames.append(frame(str(index), t, 0.0, 0.0, detection))

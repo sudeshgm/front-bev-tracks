@@ -177,20 +177,24 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
             det = detections[j]
             dt = frame["t"] - track["last_t"]
             if dt > 1e-3:
-                vel = (centre - track["world"]) / dt
+                step = (centre - track["world"]) / dt
             else:
-                vel = track["vel_world"]
+                step = track["vel_world"]
             yaw = _yaw_of(pose)
             c, s = np.cos(yaw), np.sin(yaw)
             model_v = np.array(
                 [c * det["box"][7] - s * det["box"][8], s * det["box"][7] + c * det["box"][8]],
                 dtype=np.float64,
             )
-            # The box speed is zero unless a detector filled it in. Mixing that
-            # zero in halves the real speed every frame, so the prediction
-            # stops and the track breaks at the next gap.
+            # A zero in the box is not a measured speed. One noisy step is not
+            # the speed either: follow the steps, but keep most of the speed
+            # the track already has.
             if float(np.linalg.norm(model_v)) > 0.5:
-                vel = 0.5 * vel + 0.5 * model_v
+                vel = 0.5 * step + 0.5 * model_v
+            elif track["hits"] >= 2 and float(np.linalg.norm(track["vel_world"])) > 0.3:
+                vel = 0.6 * track["vel_world"] + 0.4 * step
+            else:
+                vel = step
             track["world"] = centre
             track["vel_world"] = vel
             track["last_t"] = frame["t"]
@@ -306,7 +310,8 @@ def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) 
         if len(measured) < 2:
             continue
         last = index_of.get(str(measured[-1]["token"]))
-        early = index_of.get(str(measured[max(0, len(measured) - 4)]["token"]))
+        early_at = max(0, len(measured) - 4)
+        early = index_of.get(str(measured[early_at]["token"]))
         if last is None or early is None or last <= early:
             continue
         span = times[last] - times[early]
@@ -314,7 +319,7 @@ def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) 
             continue
         velocity = (
             np.asarray(measured[-1]["world"], dtype=np.float64)
-            - np.asarray(measured[early]["world"], dtype=np.float64)
+            - np.asarray(measured[early_at]["world"], dtype=np.float64)
         ) / span
         if float(np.linalg.norm(velocity)) < 0.5:
             continue
