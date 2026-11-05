@@ -186,7 +186,11 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
                 [c * det["box"][7] - s * det["box"][8], s * det["box"][7] + c * det["box"][8]],
                 dtype=np.float64,
             )
-            vel = 0.5 * vel + 0.5 * model_v
+            # The box speed is zero unless a detector filled it in. Mixing that
+            # zero in halves the real speed every frame, so the prediction
+            # stops and the track breaks at the next gap.
+            if float(np.linalg.norm(model_v)) > 0.5:
+                vel = 0.5 * vel + 0.5 * model_v
             track["world"] = centre
             track["vel_world"] = vel
             track["last_t"] = frame["t"]
@@ -246,7 +250,96 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
                 "samples": track["samples"],
             }
         )
-    return published
+    place_centers(published, frames)
+    return extend_tracks(published, frames)
+
+
+def place_centers(tracks: list[dict], frames: list[dict]) -> list[dict]:
+    """Move a point from the near face to the centre, along the track heading.
+
+    The ground contact is the face the camera sees. The centre is half a
+    length further from the ego, along the way the track itself is moving.
+    A track that has not moved has no heading, and is left on the face.
+    """
+    pose_of = {str(frame["token"]): frame["pose"] for frame in frames}
+    for track in tracks:
+        measured = [sample for sample in track["samples"] if not sample.get("predicted")]
+        if len(measured) < 2:
+            continue
+        delta = np.asarray(measured[-1]["world"], dtype=np.float64) - np.asarray(measured[0]["world"], dtype=np.float64)
+        length = float(np.linalg.norm(delta))
+        if length < 1.0:
+            continue
+        heading = delta / length
+        for sample in measured:
+            pose = pose_of.get(str(sample["token"]))
+            box = sample.get("box") or []
+            if pose is None or len(box) < 5:
+                continue
+            half = 0.5 * float(box[4])
+            point = np.asarray(sample["world"], dtype=np.float64)
+            away = point - np.array([pose["x"], pose["y"]], dtype=np.float64)
+            shift = heading * half if float(np.dot(heading, away)) >= 0 else -heading * half
+            moved = point + shift
+            sample["face"] = [round(float(point[0]), 3), round(float(point[1]), 3)]
+            sample["world"] = [round(float(moved[0]), 3), round(float(moved[1]), 3)]
+    return tracks
+
+
+def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) -> list[dict]:
+    """Continue a moving track for up to two seconds after its last detection.
+
+    The tag needs the crossing of the ego path. The car often leaves the
+    image before that. The same speed the positions already support is
+    integrated through the frames that follow, and those points are marked
+    predicted. A car that is standing still is not invented forward.
+    """
+    if len(frames) < 2:
+        return tracks
+    ordered = sorted(frames, key=lambda frame: float(frame["t"]))
+    times = [float(frame["t"]) for frame in ordered]
+    tokens = [str(frame["token"]) for frame in ordered]
+    index_of = {token: index for index, token in enumerate(tokens)}
+    for track in tracks:
+        measured = [sample for sample in track["samples"] if not sample.get("predicted")]
+        track["samples"] = measured
+        if len(measured) < 2:
+            continue
+        last = index_of.get(str(measured[-1]["token"]))
+        early = index_of.get(str(measured[max(0, len(measured) - 4)]["token"]))
+        if last is None or early is None or last <= early:
+            continue
+        span = times[last] - times[early]
+        if span < 1e-3:
+            continue
+        velocity = (
+            np.asarray(measured[-1]["world"], dtype=np.float64)
+            - np.asarray(measured[early]["world"], dtype=np.float64)
+        ) / span
+        if float(np.linalg.norm(velocity)) < 0.5:
+            continue
+        point = np.asarray(measured[-1]["world"], dtype=np.float64)
+        elapsed = 0.0
+        last_box = measured[-1].get("box")
+        last_score = measured[-1]["score"]
+        for index in range(last + 1, len(ordered)):
+            step = times[index] - times[index - 1]
+            if step <= 0:
+                continue
+            elapsed += step
+            if elapsed > horizon:
+                break
+            point = point + velocity * step
+            measured.append(
+                {
+                    "token": tokens[index],
+                    "score": last_score,
+                    "box": last_box,
+                    "world": [round(float(point[0]), 3), round(float(point[1]), 3)],
+                    "predicted": True,
+                }
+            )
+    return tracks
 
 
 def _bounds_to_size(bound: tuple[float, float, float]) -> int:

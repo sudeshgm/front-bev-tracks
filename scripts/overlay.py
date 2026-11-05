@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qdtrack.tracks import fit_lane_curves, integrate_ego, track_objects, world_to_ego
+from qdtrack.tracks import fit_lane_curves, integrate_ego, track_objects, world_to_ego, extend_tracks
 
 MODEL = 640
 CONTENT_H = 360
@@ -326,8 +326,11 @@ def smooth_world(tracks, poses, frame_dt):
     not zero, and that is what is kept.
     """
     for track in tracks:
+        predicted = [sample for sample in track["samples"] if sample.get("predicted")]
+        track["samples"] = [sample for sample in track["samples"] if not sample.get("predicted")]
         worlds = np.array([sample["world"] for sample in track["samples"]], dtype=np.float64)
         if len(worlds) < 3:
+            track["samples"].extend(predicted)
             continue
         bearings = np.array(
             [abs(np.arctan2(sample["box"][1], max(sample["box"][0], 0.1))) for sample in track["samples"]]
@@ -354,6 +357,7 @@ def smooth_world(tracks, poses, frame_dt):
             path = np.repeat(np.median(path, axis=0).reshape(1, 2), len(worlds), axis=0)
         for sample, point in zip(track["samples"], path):
             sample["world"] = [float(point[0]), float(point[1])]
+        track["samples"].extend(predicted)
 
 
 def open_frames(video, frames, camera, repeat):
@@ -804,6 +808,7 @@ def main():
     packed = build_frames(samples, poses, cache, camera)
     objects = track_objects(packed, score_min=0.4, max_gap=max(8, int(round(1.0 / frame_dt))))
     smooth_world(objects, poses, frame_dt)
+    extend_tracks(objects, packed, horizon=2.0)
     lanes = fit_lane_curves(packed, camera.project_many, camera.lift)
     print(
         "tracks", len(objects),
