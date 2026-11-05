@@ -324,16 +324,7 @@ def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) 
         if len(measured) < 2:
             continue
         last = index_of.get(str(measured[-1]["token"]))
-        early_at = len(measured) - 1
-        if last is None:
-            continue
-        # About a second of the approach. The last few frames are where the
-        # box bottom slides sideways, and that short step is a slow, turned heading.
-        while early_at > 0 and times[last] - times[index_of.get(str(measured[early_at - 1]["token"]), last)] < 1.0:
-            earlier = index_of.get(str(measured[early_at - 1]["token"]))
-            if earlier is None:
-                break
-            early_at -= 1
+        early_at = max(0, len(measured) - 4)
         early = index_of.get(str(measured[early_at]["token"]))
         if last is None or early is None or last <= early:
             continue
@@ -346,6 +337,15 @@ def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) 
         ) / span
         if float(np.linalg.norm(velocity)) < 0.5:
             continue
+        # Hold that velocity in the ego frame. A straight line in the world
+        # turns away from the ego as soon as the ego turns, and the car stops
+        # counting as oncoming. The speed stays the last measured speed.
+        last_yaw = float(ordered[last]["pose"]["yaw"])
+        cosine, sine = np.cos(last_yaw), np.sin(last_yaw)
+        ahead = np.array(
+            [cosine * velocity[0] + sine * velocity[1], -sine * velocity[0] + cosine * velocity[1]],
+            dtype=np.float64,
+        )
         point = np.asarray(measured[-1]["world"], dtype=np.float64)
         elapsed = 0.0
         last_box = measured[-1].get("box")
@@ -357,7 +357,13 @@ def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) 
             elapsed += step
             if elapsed > horizon:
                 break
-            point = point + velocity * step
+            yaw = float(ordered[index]["pose"]["yaw"])
+            cosine, sine = np.cos(yaw), np.sin(yaw)
+            step_world = np.array(
+                [cosine * ahead[0] - sine * ahead[1], sine * ahead[0] + cosine * ahead[1]],
+                dtype=np.float64,
+            )
+            point = point + step_world * step
             measured.append(
                 {
                     "token": tokens[index],

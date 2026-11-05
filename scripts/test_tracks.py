@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from qdtrack.geometry import build_lidar2img, pixel_to_ego, sensor_to_ego  # noqa: E402
 from qdtrack.tracks import (  # noqa: E402
     ego_to_world,
+    extend_tracks,
     fit_lane_curves,
     integrate_ego,
     merge_object_tracks,
@@ -461,33 +462,35 @@ def test_a_close_approach_is_not_left_behind():
     assert abs(end - last) < 2.5, (end, last)
 
 
-def test_a_sideways_wander_does_not_turn_the_heading():
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
-    overlay = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(overlay)
-    poses = [{"x": 0.0, "y": 0.0, "yaw": 0.0} for _ in range(30)]
+def test_the_tail_holds_its_heading_as_the_ego_turns():
+    frames = []
+    for index in range(20):
+        yaw = 0.0 if index < 8 else (index - 8) * 0.05
+        frames.append({"token": str(index), "t": index * 0.1, "pose": {"x": 0.0, "y": 0.0, "yaw": yaw}})
     samples = []
-    for index in range(30):
-        along = 40.0 - index * 1.0
-        side = 2.0 if index <= 18 else 2.0 - (index - 18) * 0.4
+    for index in range(8):
         samples.append(
             {
                 "token": str(index),
                 "score": 0.9,
-                "box": [along, side, 0, 1.8, 4.2, 1.5, 0, 0, 0],
-                "world": [along, side],
+                "box": [30.0 - index * 0.8, 2.0, 0, 1.8, 4.2, 1.5, 0, 0, 0],
+                "world": [30.0 - index * 0.8, 2.0],
             }
         )
-    last_along = samples[-1]["world"][0]
-    track = {"id": 1, "name": "vehicle", "label": 0, "hits": len(samples), "samples": samples}
-    overlay.smooth_world([track], poses, 0.067)
-    worlds = np.array([sample["world"] for sample in track["samples"]], dtype=np.float64)
-    delta = worlds[-1] - worlds[-12]
-    assert abs(delta[0]) > 8.0, delta
-    assert abs(delta[1]) < 1.5, delta
-    assert abs(worlds[-1, 0] - last_along) < 2.5, (worlds[-1, 0], last_along)
+    track = {"id": 1, "name": "vehicle", "label": 0, "hits": 8, "samples": samples}
+    extend_tracks([track], frames, horizon=1.0)
+    predicted = [sample for sample in track["samples"] if sample.get("predicted")]
+    assert len(predicted) >= 4, len(predicted)
+    start = np.asarray(predicted[-2]["world"], dtype=np.float64)
+    end = np.asarray(predicted[-1]["world"], dtype=np.float64)
+    dt = frames[int(predicted[-1]["token"])]["t"] - frames[int(predicted[-2]["token"])]["t"]
+    world_v = (end - start) / dt
+    yaw = frames[int(predicted[-1]["token"])]["pose"]["yaw"]
+    cosine, sine = np.cos(yaw), np.sin(yaw)
+    ahead = cosine * world_v[0] + sine * world_v[1]
+    side = -sine * world_v[0] + cosine * world_v[1]
+    assert abs(ahead + 8.0) < 1.5, ahead
+    assert abs(side) < 1.0, side
 
 
 def test_oncoming_range_jump_keeps_the_id():
@@ -554,6 +557,6 @@ if __name__ == "__main__":
     test_a_gap_keeps_the_speed_and_the_track_continues()
     test_a_sideways_jump_is_a_different_car()
     test_a_close_approach_is_not_left_behind()
-    test_a_sideways_wander_does_not_turn_the_heading()
+    test_the_tail_holds_its_heading_as_the_ego_turns()
     test_oncoming_car_is_not_held_still()
     print("ok")
