@@ -376,6 +376,44 @@ def test_a_far_line_is_not_the_ego_lane():
     assert len(curves) == 2, laterals
 
 
+def test_a_gap_keeps_the_speed_and_the_track_continues():
+    def frame(token, t, x, y, detections):
+        boxes, scores, labels = [], [], []
+        for dx, dy in detections:
+            boxes.append([dx, dy, 0.0, 1.8, 4.2, 1.5, 0.0, 0.0, 0.0])
+            scores.append(0.9)
+            labels.append(0)
+        return {
+            "token": token,
+            "t": t,
+            "pose": {"x": x, "y": y, "yaw": 0.0},
+            "boxes": boxes,
+            "scores": scores,
+            "labels": labels,
+        }
+
+    # A car crosses in front at 8 m/s. The box speed is zero. After three
+    # hits it leaves the image for 0.6 s and is seen again, then the clip
+    # continues with no detection.
+    seen = [(0.0, 15.0, 0.0), (0.2, 15.0, 1.6), (0.4, 15.0, 3.2), (1.0, 15.0, 8.0)]
+    frames = []
+    for index in range(12):
+        t = round(index * 0.2, 3)
+        detection = [(15.0, y) for st, _x, y in seen if abs(st - t) < 1e-6]
+        frames.append(frame(str(index), t, 0.0, 0.0, detection))
+    tracks = track_objects(frames, score_min=0.2, max_gap=8)
+    assert len(tracks) == 1, [(track["id"], track["hits"]) for track in tracks]
+    predicted = [sample for sample in tracks[0]["samples"] if sample.get("predicted")]
+    assert len(predicted) >= 4, len(predicted)
+    moved = abs(predicted[-1]["world"][1] - tracks[0]["samples"][2]["world"][1])
+    assert moved > 3.0, moved
+    # The centre is half a length further from the ego than the face.
+    face = tracks[0]["samples"][0].get("face")
+    assert face is not None
+    centre = tracks[0]["samples"][0]["world"]
+    assert abs(centre[0]) + abs(centre[1]) > abs(face[0]) + abs(face[1])
+
+
 def test_oncoming_range_jump_keeps_the_id():
     def frame(token, t, pose, centres):
         boxes, scores, labels = [], [], []
@@ -437,5 +475,6 @@ if __name__ == "__main__":
     test_a_merge_taper_stays_one_marking()
     test_two_markings_do_not_cross()
     test_oncoming_range_jump_keeps_the_id()
+    test_a_gap_keeps_the_speed_and_the_track_continues()
     test_oncoming_car_is_not_held_still()
     print("ok")
