@@ -324,7 +324,16 @@ def extend_tracks(tracks: list[dict], frames: list[dict], horizon: float = 2.0) 
         if len(measured) < 2:
             continue
         last = index_of.get(str(measured[-1]["token"]))
-        early_at = max(0, len(measured) - 4)
+        early_at = len(measured) - 1
+        if last is None:
+            continue
+        # About a second of the approach. The last few frames are where the
+        # box bottom slides sideways, and that short step is a slow, turned heading.
+        while early_at > 0 and times[last] - times[index_of.get(str(measured[early_at - 1]["token"]), last)] < 1.0:
+            earlier = index_of.get(str(measured[early_at - 1]["token"]))
+            if earlier is None:
+                break
+            early_at -= 1
         early = index_of.get(str(measured[early_at]["token"]))
         if last is None or early is None or last <= early:
             continue
