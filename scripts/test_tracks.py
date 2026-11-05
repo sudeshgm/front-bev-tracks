@@ -461,6 +461,35 @@ def test_a_close_approach_is_not_left_behind():
     assert abs(end - last) < 2.5, (end, last)
 
 
+def test_a_sideways_wander_does_not_turn_the_heading():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    poses = [{"x": 0.0, "y": 0.0, "yaw": 0.0} for _ in range(30)]
+    samples = []
+    for index in range(30):
+        along = 40.0 - index * 1.0
+        side = 2.0 if index <= 18 else 2.0 - (index - 18) * 0.4
+        samples.append(
+            {
+                "token": str(index),
+                "score": 0.9,
+                "box": [along, side, 0, 1.8, 4.2, 1.5, 0, 0, 0],
+                "world": [along, side],
+            }
+        )
+    last_along = samples[-1]["world"][0]
+    track = {"id": 1, "name": "vehicle", "label": 0, "hits": len(samples), "samples": samples}
+    overlay.smooth_world([track], poses, 0.067)
+    worlds = np.array([sample["world"] for sample in track["samples"]], dtype=np.float64)
+    delta = worlds[-1] - worlds[-12]
+    assert abs(delta[0]) > 8.0, delta
+    assert abs(delta[1]) < 1.5, delta
+    assert abs(worlds[-1, 0] - last_along) < 2.5, (worlds[-1, 0], last_along)
+
+
 def test_oncoming_range_jump_keeps_the_id():
     def frame(token, t, pose, centres):
         boxes, scores, labels = [], [], []
@@ -525,5 +554,6 @@ if __name__ == "__main__":
     test_a_gap_keeps_the_speed_and_the_track_continues()
     test_a_sideways_jump_is_a_different_car()
     test_a_close_approach_is_not_left_behind()
+    test_a_sideways_wander_does_not_turn_the_heading()
     test_oncoming_car_is_not_held_still()
     print("ok")
