@@ -392,24 +392,27 @@ def test_a_gap_keeps_the_speed_and_the_track_continues():
             "labels": labels,
         }
 
-    # The car is first seen at frame 8, so a sample index and a frame index
-    # are not the same number. The clip continues after the last detection.
-    seen = [(1.6, 15.0, 0.0), (1.8, 15.0, 1.6), (2.0, 15.0, 3.2), (2.6, 15.0, 8.0)]
+    # Seen from frame 8. A 0.2 s miss stays the same track. The detection 0.8 s
+    # later sits where the old speed predicts, which is where the car in front
+    # would be, and it must not inherit the id. The first track still continues
+    # as predicted points.
+    seen = [(1.6, 15.0, 0.0), (1.8, 15.0, 1.6), (2.0, 15.0, 3.2), (2.8, 15.0, 9.6)]
     frames = []
     for index in range(20):
         t = round(index * 0.2, 3)
         detection = [(15.0, y) for st, _x, y in seen if abs(st - t) < 1e-6]
         frames.append(frame(str(index), t, 0.0, 0.0, detection))
     tracks = track_objects(frames, score_min=0.2, max_gap=8)
-    assert len(tracks) == 1, [(track["id"], track["hits"]) for track in tracks]
-    predicted = [sample for sample in tracks[0]["samples"] if sample.get("predicted")]
+    assert len(tracks) == 2, [(track["id"], track["hits"]) for track in tracks]
+    first = min(tracks, key=lambda track: int(track["samples"][0]["token"]))
+    assert first["hits"] == 3
+    measured = {sample["token"] for sample in first["samples"] if not sample.get("predicted")}
+    assert "14" not in measured
+    predicted = [sample for sample in first["samples"] if sample.get("predicted")]
     assert len(predicted) >= 4, len(predicted)
-    moved = abs(predicted[-1]["world"][1] - tracks[0]["samples"][2]["world"][1])
-    assert moved > 3.0, moved
-    # The centre is half a length further from the ego than the face.
-    face = tracks[0]["samples"][0].get("face")
+    face = first["samples"][0].get("face")
     assert face is not None
-    centre = tracks[0]["samples"][0]["world"]
+    centre = first["samples"][0]["world"]
     assert abs(centre[0]) + abs(centre[1]) > abs(face[0]) + abs(face[1])
 
 
