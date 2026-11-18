@@ -6,6 +6,8 @@ odometry frame built from the vehicle speed and yaw rate.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 DET_CLASS_NAMES = (
@@ -699,6 +701,104 @@ def _pixel_distance(pixels, world, pose, project_many):
     return np.min([_segment_distance(pixels, segment) for segment in segments], axis=0)
 
 
+# Faster _fit_controls residual, byte-identical to the per-observation _pixel_distance loop.
+# All observations of one residual evaluation are projected together (cos/sin per pose as world_to_ego computes
+# them, one project_many call), and the pixel-to-curve distance skips segment chunks whose bounding box cannot hold
+# the minimum (lower bound > best exact distance + _FAST_MARGIN). Every evaluated pixel/segment pair uses the same
+# float operations as _segment_distance, and min is exact, so the residual, the fitted lanes and everything
+# downstream are unchanged. Tests: qdtrack/test_fast_lanes.py. FBT_FAST_LANES=0 restores the loop (temporary
+# off switch while results are compared).
+_FAST_LANES = os.environ.get("FBT_FAST_LANES", "1") != "0"
+_FAST_CHUNK = 8
+_FAST_MARGIN = 1e-6
+
+
+def _fast_prepare(observations, poses):
+    """Per-fit constants: pixels of all observations, their owner, and each pose's rotation and origin."""
+    pixels = [np.asarray(p) for _, p in observations]
+    counts = np.array([len(p) for p in pixels], dtype=np.int64)
+    rot = np.empty((len(pixels), 2, 2))
+    org = np.empty((len(pixels), 2))
+    for k, (index, _) in enumerate(observations):
+        pose = poses[index]
+        yaw = _yaw_of(pose)
+        c, s = np.cos(yaw), np.sin(yaw)
+        rot[k] = np.array([[c, s], [-s, c]], dtype=np.float64).T
+        org[k] = np.array([pose["x"], pose["y"]], dtype=np.float64)
+    allpix = np.concatenate(pixels) if pixels else np.zeros((0, 2))
+    owner = np.repeat(np.arange(len(pixels)), counts)
+    return {"rot": rot, "org": org, "pix": allpix, "owner": owner, "n_obs": len(pixels)}
+
+
+def _fast_project(prep, world, project_many):
+    world = np.asarray(world, dtype=np.float64)
+    delta = world[None, :, :2] - prep["org"][:, None, :]
+    ego = np.matmul(delta, prep["rot"])  # == delta @ rotation_t.T of world_to_ego, per observation
+    px = np.asarray(project_many(ego.reshape(-1, 2))).reshape(prep["n_obs"], len(world), 2)
+    ok = np.isfinite(px[:, :, 0])
+    return px, ok[:, :-1] & ok[:, 1:]  # a segment joins two consecutive finite points (runs of >= 2)
+
+
+def _fast_pair_distance(points, start, end):
+    """_segment_distance's per-pair arithmetic."""
+    step = end - start
+    length2 = np.maximum(np.sum(step * step, axis=-1), 1e-6)
+    offset = points - start
+    mix = np.clip(np.sum(offset * step, axis=-1) / length2, 0.0, 1.0)
+    closest = start + mix[..., None] * step
+    return np.linalg.norm(points - closest, axis=-1)
+
+
+def _fast_dense(prep, world, project_many):
+    """All pairs, no pruning. Used for degenerate inputs."""
+    pix, own = prep["pix"], prep["owner"]
+    if prep["n_obs"] == 0:
+        return np.zeros(0)
+    px, seg_ok = _fast_project(prep, world, project_many)
+    if px.shape[1] < 2:
+        return np.full(len(pix), 64.0)
+    with np.errstate(invalid="ignore"):
+        dist = _fast_pair_distance(pix[:, None, :], px[own, :-1, :], px[own, 1:, :])
+    out = np.where(seg_ok[own], dist, np.inf).min(axis=1)
+    return np.where(seg_ok.any(axis=1)[own], out, 64.0)
+
+
+def _fast_pixel_distances(prep, world, project_many):
+    """np.concatenate([_pixel_distance(pixels, world, poses[i], project_many) for i, pixels in observations])."""
+    pix, own = prep["pix"], prep["owner"]
+    n_obs, n_world = prep["n_obs"], len(world)
+    if n_obs == 0 or n_world < 2 or len(pix) == 0 or not np.all(np.isfinite(pix)):
+        return _fast_dense(prep, world, project_many)
+    px, seg_ok = _fast_project(prep, world, project_many)
+    K = _FAST_CHUNK
+    S = n_world - 1
+    C = -(-S // K)
+    pad = C * K - S
+    A = np.pad(px[:, :-1, :], ((0, 0), (0, pad), (0, 0)), constant_values=np.nan)
+    B = np.pad(px[:, 1:, :], ((0, 0), (0, pad), (0, 0)), constant_values=np.nan)
+    valid = np.pad(seg_ok, ((0, 0), (0, pad)), constant_values=False)
+    lo = np.where(valid[..., None], np.minimum(A, B), np.inf).reshape(n_obs, C, K, 2).min(axis=2)
+    hi = np.where(valid[..., None], np.maximum(A, B), -np.inf).reshape(n_obs, C, K, 2).max(axis=2)
+    Ac, Bc, Vc = A.reshape(n_obs, C, K, 2), B.reshape(n_obs, C, K, 2), valid.reshape(n_obs, C, K)
+    out = np.full(len(pix), 64.0)
+    rows = np.flatnonzero(seg_ok.any(axis=1)[own])
+    if len(rows) == 0:
+        return out
+    P, o = pix[rows], own[rows]
+    with np.errstate(invalid="ignore"):
+        gap = np.maximum(np.maximum(lo[o] - P[:, None, :], P[:, None, :] - hi[o]), 0.0)
+        bound = np.sqrt(np.sum(gap * gap, axis=-1))  # distance to each chunk's box; inf if the chunk is empty
+        best = bound.argmin(axis=1)
+        d0 = _fast_pair_distance(P[:, None, :], Ac[o, best], Bc[o, best])
+        upper = np.where(Vc[o, best], d0, np.inf).min(axis=1)
+        ti, ci = np.nonzero(bound <= (upper + _FAST_MARGIN)[:, None])  # row-major, so grouped by ti
+        d = _fast_pair_distance(P[ti][:, None, :], Ac[o[ti], ci], Bc[o[ti], ci])
+        d = np.where(Vc[o[ti], ci], d, np.inf).min(axis=1)
+    first = np.flatnonzero(np.concatenate(([True], ti[1:] != ti[:-1])))
+    out[rows[ti[first]]] = np.minimum.reduceat(d, first)
+    return out
+
+
 def _curve_world(control_s, lateral, path_xy, path_s, path_yaw, step):
     samples = np.arange(control_s[0], control_s[-1] + step * 0.5, step)
     if len(samples) < 2:
@@ -715,13 +815,17 @@ def _fit_controls(control_s, lateral, observations, poses, path_xy, path_s, path
     """Move the lateral of each control so the projected curve hits the pixels."""
     values = np.asarray(lateral, dtype=np.float64).copy()
     count = len(values)
+    prep = _fast_prepare(observations, poses) if _FAST_LANES else None
 
     def residual(current):
         world = _curve_world(control_s, current, path_xy, path_s, path_yaw, 1.0)
-        parts = [
-            _pixel_distance(pixels, world, poses[index], project_many)
-            for index, pixels in observations
-        ]
+        if prep is not None:
+            parts = [_fast_pixel_distances(prep, world, project_many)]
+        else:
+            parts = [
+                _pixel_distance(pixels, world, poses[index], project_many)
+                for index, pixels in observations
+            ]
         if count >= 3:
             second = current[:-2] - 2.0 * current[1:-1] + current[2:]
             parts.append(second / 0.8)
