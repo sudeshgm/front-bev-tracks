@@ -709,6 +709,9 @@ def _pixel_distance(pixels, world, pose, project_many):
 # downstream are unchanged. Tests: qdtrack/test_fast_lanes.py. FBT_FAST_LANES=0 restores the loop (temporary
 # off switch while results are compared).
 _FAST_LANES = os.environ.get("FBT_FAST_LANES", "1") != "0"
+# batch: one projection for the base residual and every control bump.
+# fd: the original per-control loop. The lanes can move; check precision and recall.
+_SOLVER = os.environ.get("FBT_SOLVER", "batch")
 _FAST_CHUNK = 8
 _FAST_MARGIN = 1e-6
 
@@ -799,6 +802,312 @@ def _fast_pixel_distances(prep, world, project_many):
     return out
 
 
+def _fast_winner(prep, world, project_many):
+    """Pruned closest segment. Returns distance and the segment index, or -1."""
+    pix, own = prep["pix"], prep["owner"]
+    dist = np.full(len(pix), 64.0)
+    which = np.full(len(pix), -1, dtype=np.int64)
+    if prep["n_obs"] == 0 or len(world) < 2 or len(pix) == 0:
+        return dist, which
+    px, seg_ok = _fast_project(prep, world, project_many)
+    K = _FAST_CHUNK
+    S = len(world) - 1
+    C = -(-S // K)
+    pad = C * K - S
+    A = np.pad(px[:, :-1, :], ((0, 0), (0, pad), (0, 0)), constant_values=np.nan)
+    B = np.pad(px[:, 1:, :], ((0, 0), (0, pad), (0, 0)), constant_values=np.nan)
+    valid = np.pad(seg_ok, ((0, 0), (0, pad)), constant_values=False)
+    lo = np.where(valid[..., None], np.minimum(A, B), np.inf).reshape(prep["n_obs"], C, K, 2).min(axis=2)
+    hi = np.where(valid[..., None], np.maximum(A, B), -np.inf).reshape(prep["n_obs"], C, K, 2).max(axis=2)
+    Ac, Bc, Vc = A.reshape(prep["n_obs"], C, K, 2), B.reshape(prep["n_obs"], C, K, 2), valid.reshape(prep["n_obs"], C, K)
+    rows = np.flatnonzero(seg_ok.any(axis=1)[own])
+    if len(rows) == 0:
+        return dist, which
+    P, o = pix[rows], own[rows]
+    with np.errstate(invalid="ignore"):
+        gap = np.maximum(np.maximum(lo[o] - P[:, None, :], P[:, None, :] - hi[o]), 0.0)
+        bound = np.sqrt(np.sum(gap * gap, axis=-1))
+        best = bound.argmin(axis=1)
+        d0 = _fast_pair_distance(P[:, None, :], Ac[o, best], Bc[o, best])
+        upper = np.where(Vc[o, best], d0, np.inf).min(axis=1)
+        ti, ci = np.nonzero(bound <= (upper + _FAST_MARGIN)[:, None])
+        local = _fast_pair_distance(P[ti][:, None, :], Ac[o[ti], ci], Bc[o[ti], ci])
+        local = np.where(Vc[o[ti], ci], local, np.inf)
+        winner = local.argmin(axis=1)
+        d = local[np.arange(len(local)), winner]
+    first = np.flatnonzero(np.concatenate(([True], ti[1:] != ti[:-1])))
+    # reduceat-style: the chunk with the smallest d for each pixel
+    order = np.argsort(ti, kind="stable")
+    ti, ci, d, winner = ti[order], ci[order], d[order], winner[order]
+    first = np.flatnonzero(np.concatenate(([True], ti[1:] != ti[:-1])))
+    ends = np.concatenate([first[1:], [len(ti)]])
+    for start, stop in zip(first, ends):
+        pick = start + np.argmin(d[start:stop])
+        pixel = rows[ti[pick]]
+        dist[pixel] = d[pick]
+        which[pixel] = ci[pick] * K + winner[pick]
+    return dist, which
+
+
+def _curve_basis(control_s, path_xy, path_s, path_yaw, step=1.0):
+    """Sample stations, path pose and the linear weights from controls to samples."""
+    control_s = np.asarray(control_s, dtype=np.float64)
+    samples = np.arange(control_s[0], control_s[-1] + step * 0.5, step)
+    if len(samples) < 2:
+        samples = np.array([control_s[0], control_s[-1]], dtype=np.float64)
+    origin = np.empty((len(samples), 2), dtype=np.float64)
+    yaw = np.empty(len(samples), dtype=np.float64)
+    before = samples <= path_s[0]
+    after = samples >= path_s[-1]
+    mid = ~before & ~after
+    head = np.array([np.cos(path_yaw[0]), np.sin(path_yaw[0])])
+    tail = np.array([np.cos(path_yaw[-1]), np.sin(path_yaw[-1])])
+    yaw[before] = path_yaw[0]
+    origin[before] = path_xy[0] + (samples[before] - path_s[0])[:, None] * head
+    yaw[after] = path_yaw[-1]
+    origin[after] = path_xy[-1] + (samples[after] - path_s[-1])[:, None] * tail
+    if np.any(mid):
+        index = np.clip(np.searchsorted(path_s, samples[mid], side="right") - 1, 0, len(path_s) - 2)
+        span = np.maximum(path_s[index + 1] - path_s[index], 1e-6)
+        mix = (samples[mid] - path_s[index]) / span
+        yaw[mid] = path_yaw[index]
+        origin[mid] = path_xy[index] * (1.0 - mix)[:, None] + path_xy[index + 1] * mix[:, None]
+    left = np.stack([-np.sin(yaw), np.cos(yaw)], axis=1)
+    count = len(control_s)
+    pos = np.clip(np.searchsorted(control_s, samples), 1, count - 1)
+    lo = pos - 1
+    span = np.maximum(control_s[pos] - control_s[lo], 1e-9)
+    mix = np.clip((samples - control_s[lo]) / span, 0.0, 1.0)
+    weights = np.zeros((len(samples), count), dtype=np.float64)
+    rows = np.arange(len(samples))
+    weights[rows, lo] = 1.0 - mix
+    weights[rows, pos] += mix
+    return {"origin": origin, "left": left, "W": weights}
+
+
+def _worlds_from_values(basis, values):
+    lat = np.atleast_2d(np.asarray(values, dtype=np.float64)) @ basis["W"].T
+    return basis["origin"] + lat[..., None] * basis["left"]
+
+
+def _project_worlds(prep, worlds, project_many):
+    delta = worlds[:, None, :, :] - prep["org"][None, :, None, :]
+    ego = np.matmul(delta, prep["rot"])
+    flat = np.asarray(project_many(ego.reshape(-1, 2)), dtype=np.float64)
+    pixels = flat.reshape(worlds.shape[0], prep["n_obs"], worlds.shape[1], 2)
+    finite = np.isfinite(pixels[..., 0])
+    return pixels, finite[..., :-1] & finite[..., 1:]
+
+
+def _pair_min_cuda(points, start, end, valid):
+    import torch
+
+    device = "cuda"
+    pts = torch.as_tensor(points, dtype=torch.float32, device=device)
+    a = torch.as_tensor(start, dtype=torch.float32, device=device)
+    b = torch.as_tensor(end, dtype=torch.float32, device=device)
+    ok = torch.as_tensor(valid, dtype=torch.bool, device=device)
+    step = b - a
+    length2 = torch.clamp((step * step).sum(-1), min=1e-6)
+    offset = pts[None, :, None, :] - a
+    mix = torch.clamp((offset * step).sum(-1) / length2, 0.0, 1.0)
+    closest = a + mix[..., None] * step
+    dist = torch.linalg.norm(pts[None, :, None, :] - closest, dim=-1)
+    dist = torch.where(ok, dist, torch.full_like(dist, float("inf")))
+    out = dist.min(dim=-1).values
+    out = torch.where(ok.any(dim=-1), out, torch.full_like(out, 64.0))
+    return out.detach().cpu().numpy().astype(np.float64)
+
+
+def _pair_min(points, start, end, valid):
+    """Min distance from points to segments. points (P, 2), start/end/valid (B, P, S, ...)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return _pair_min_cuda(points, start, end, valid)
+    except Exception:
+        pass
+    step = end - start
+    length2 = np.maximum(np.sum(step * step, axis=-1), 1e-6)
+    offset = points[None, :, None, :] - start
+    mix = np.clip(np.sum(offset * step, axis=-1) / length2, 0.0, 1.0)
+    closest = start + mix[..., None] * step
+    dist = np.linalg.norm(points[None, :, None, :] - closest, axis=-1)
+    dist = np.where(valid, dist, np.inf)
+    out = dist.min(axis=-1)
+    return np.where(valid.any(axis=-1), out, 64.0)
+
+
+def _distances_many(prep, pixels, seg_ok):
+    pix, own = prep["pix"], prep["owner"]
+    batch, _obs, samples, _xy = pixels.shape
+    if prep["n_obs"] == 0 or samples < 2 or len(pix) == 0:
+        return np.full((batch, len(pix)), 64.0)
+    start = pixels[:, own, :-1, :]
+    end = pixels[:, own, 1:, :]
+    valid = seg_ok[:, own, :]
+    # Chunk pixels so a long clip does not build a multi-gigabyte pair tensor.
+    width = 2048
+    out = np.empty((batch, len(pix)), dtype=np.float64)
+    for lo in range(0, len(pix), width):
+        hi = min(lo + width, len(pix))
+        out[:, lo:hi] = _pair_min(pix[lo:hi], start[:, lo:hi], end[:, lo:hi], valid[:, lo:hi])
+    return out
+
+
+def _residual_many(basis, prep, values, project_many, count):
+    values = np.atleast_2d(np.asarray(values, dtype=np.float64))
+    worlds = _worlds_from_values(basis, values)
+    if prep["n_obs"] == 0 or len(prep["pix"]) == 0:
+        dist = np.zeros((len(values), 0))
+    else:
+        pixels, seg_ok = _project_worlds(prep, worlds, project_many)
+        dist = _distances_many(prep, pixels, seg_ok)
+    if count >= 3:
+        second = values[:, :-2] - 2.0 * values[:, 1:-1] + values[:, 2:]
+        return np.concatenate([dist, second / 0.8], axis=1)
+    return dist
+
+
+def _cylinder_pixel_jacobian(ego, camera):
+    """du, dv over dego_x, dego_y for the cylinder used by project_many. ego (..., 2)."""
+    fx, fy = float(camera.fx), float(camera.fy)
+    # project_many subtracts the camera mount. The derivative is through that point.
+    ex = ego[..., 0] - float(camera.position[0])
+    ey = ego[..., 1] - float(camera.position[1])
+    hyp2 = np.maximum(ex * ex + ey * ey, 1e-12)
+    hyp = np.sqrt(hyp2)
+    # u = cx - fx * atan2(ey, ex); v = cy + fy * z / hyp
+    du_dx = fx * ey / hyp2
+    du_dy = -fx * ex / hyp2
+    z = float(camera.position[2])
+    dv_dx = -fy * z * ex / (hyp2 * hyp)
+    dv_dy = -fy * z * ey / (hyp2 * hyp)
+    return np.stack([du_dx, du_dy, dv_dx, dv_dy], axis=-1)
+
+
+def _segment_distance_grad(point, start, end):
+    """Distance and d(distance)/d(start), d(distance)/d(end). point (P, 2), start/end (P, 2)."""
+    step = end - start
+    length2 = np.maximum(np.sum(step * step, axis=-1), 1e-6)
+    offset = point - start
+    raw = np.sum(offset * step, axis=-1) / length2
+    mix = np.clip(raw, 0.0, 1.0)
+    closest = start + mix[:, None] * step
+    delta = point - closest
+    dist = np.linalg.norm(delta, axis=-1)
+    unit = delta / np.maximum(dist[:, None], 1e-9)
+    # d(closest)/d(start) = (1-mix) I, d(closest)/d(end) = mix I, ignoring the mix derivative
+    # (mix is constant between the clip boundaries; FD sees the same away from them).
+    d_start = -(1.0 - mix)[:, None] * unit
+    d_end = -mix[:, None] * unit
+    return dist, d_start, d_end
+
+
+def _fit_controls_batch(control_s, lateral, observations, poses, path_xy, path_s, path_yaw, project_many):
+    """Gauss-Newton with an analytical Jacobian. One projection per iteration, not one per control."""
+    camera = getattr(project_many, "__self__", None)
+    if camera is None or not hasattr(camera, "fx"):
+        raise RuntimeError("batch solver needs the cylinder camera on project_many")
+    values = np.asarray(lateral, dtype=np.float64).copy()
+    count = len(values)
+    basis = _curve_basis(control_s, path_xy, path_s, path_yaw, 1.0)
+    prep = _fast_prepare(observations, poses)
+    samples = basis["W"].shape[0]
+    own = prep["owner"]
+    pix = prep["pix"]
+
+    def project_base(current):
+        world = _worlds_from_values(basis, current)[0]
+        pixels, seg_ok = _project_worlds(prep, world[None], project_many)
+        return world, pixels[0], seg_ok[0]
+
+    for _ in range(6):
+        world, px, seg_ok = project_base(values)
+        dist, choice = _fast_winner(prep, world, project_many)
+        jacobian = np.zeros((len(pix) + max(count - 2, 0), count))
+        if len(pix) and samples >= 2:
+            rows = np.flatnonzero(choice >= 0)
+            if len(rows):
+                chosen = choice[rows]
+                start = px[own[rows], chosen]
+                end = px[own[rows], chosen + 1]
+                d, d_start, d_end = _segment_distance_grad(pix[rows], start, end)
+                dist[rows] = d
+                # Pixel derivative of the two samples, then through the cylinder into lateral.
+                ego = (world[None, :, :] - prep["org"][:, None, :]) @ prep["rot"]
+                pix_j = _cylinder_pixel_jacobian(ego, camera)  # (obs, S, 4)
+                obs_rows = own[rows]
+                s0, s1 = chosen, chosen + 1
+                # d(pixel)/d(ego) at the two samples, then d(ego)/d(lateral) = rot^T @ left? 
+                # ego = (world - org) @ rot, world = origin + lat * left, so d(ego)/d(lat) = left @ rot
+                rot = prep["rot"]
+                left = basis["left"]
+                dego = left @ rot[obs_rows]  # (P, 2) wait left is (S, 2), need per sample
+                # left[s] @ rot[obs] -> (2,)
+                left0 = left[s0]
+                left1 = left[s1]
+                dego0 = np.einsum("pi,pij->pj", left0, rot[obs_rows])
+                dego1 = np.einsum("pi,pij->pj", left1, rot[obs_rows])
+                j0 = pix_j[obs_rows, s0]  # (P, 4) = du_dx, du_dy, dv_dx, dv_dy
+                j1 = pix_j[obs_rows, s1]
+                dp0 = np.stack([
+                    j0[:, 0] * dego0[:, 0] + j0[:, 1] * dego0[:, 1],
+                    j0[:, 2] * dego0[:, 0] + j0[:, 3] * dego0[:, 1],
+                ], axis=1)
+                dp1 = np.stack([
+                    j1[:, 0] * dego1[:, 0] + j1[:, 1] * dego1[:, 1],
+                    j1[:, 2] * dego1[:, 0] + j1[:, 3] * dego1[:, 1],
+                ], axis=1)
+                d_lat0 = np.sum(d_start * dp0, axis=1)
+                d_lat1 = np.sum(d_end * dp1, axis=1)
+                weights = basis["W"]
+                jacobian[rows] = d_lat0[:, None] * weights[s0] + d_lat1[:, None] * weights[s1]
+        if count >= 3:
+            second = values[:-2] - 2.0 * values[1:-1] + values[2:]
+            base = np.concatenate([dist, second / 0.8])
+            for index in range(count - 2):
+                jacobian[len(pix) + index, index] += 1.0 / 0.8
+                jacobian[len(pix) + index, index + 1] += -2.0 / 0.8
+                jacobian[len(pix) + index, index + 2] += 1.0 / 0.8
+        else:
+            base = dist
+        weight = _residual_weights(base, count)
+        scale = np.sqrt(weight)
+        system = (jacobian * scale[:, None]).T @ (jacobian * scale[:, None])
+        target = (jacobian * scale[:, None]).T @ (base * scale)
+        damp = 1e-3 * (np.trace(system) / max(count, 1) + 1e-6)
+        try:
+            step = np.linalg.solve(system + damp * np.eye(count), -target)
+        except np.linalg.LinAlgError:
+            break
+        step = np.clip(step, -0.4, 0.4)
+        if float(np.linalg.norm(step)) < 1e-3:
+            break
+        candidate = values + step
+        trial_world = _worlds_from_values(basis, candidate)[0]
+        trial = _fast_pixel_distances(prep, trial_world, project_many)
+        if count >= 3:
+            sec = candidate[:-2] - 2.0 * candidate[1:-1] + candidate[2:]
+            trial = np.concatenate([trial, sec / 0.8])
+        if np.sum(trial ** 2 * weight) > np.sum(base ** 2 * weight):
+            candidate = values + 0.5 * step
+        values = candidate
+    world = _worlds_from_values(basis, values)[0]
+    return values, world
+
+
+def _residual_weights(error, count):
+    smooth = max(count - 2, 0)
+    pixel = error[:-smooth] if smooth else error
+    scale = np.ones(len(error))
+    large = np.abs(pixel) > 4.0
+    scaled = np.ones(len(pixel))
+    scaled[large] = 4.0 / np.maximum(np.abs(pixel[large]), 1e-6)
+    scale[: len(pixel)] = scaled
+    return scale
+
+
 def _curve_world(control_s, lateral, path_xy, path_s, path_yaw, step):
     samples = np.arange(control_s[0], control_s[-1] + step * 0.5, step)
     if len(samples) < 2:
@@ -813,6 +1122,10 @@ def _curve_world(control_s, lateral, path_xy, path_s, path_yaw, step):
 
 def _fit_controls(control_s, lateral, observations, poses, path_xy, path_s, path_yaw, project_many):
     """Move the lateral of each control so the projected curve hits the pixels."""
+    if _SOLVER != "fd" and _FAST_LANES:
+        return _fit_controls_batch(
+            control_s, lateral, observations, poses, path_xy, path_s, path_yaw, project_many
+        )
     values = np.asarray(lateral, dtype=np.float64).copy()
     count = len(values)
     prep = _fast_prepare(observations, poses) if _FAST_LANES else None
