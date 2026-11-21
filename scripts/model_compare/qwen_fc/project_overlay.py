@@ -85,8 +85,8 @@ def draw_frame(img, pred, calib, frame_meta, score):
     lines = np.isin(m, [2, 3])
     vis = cv2.addWeighted(over, 0.45, vis, 0.55, 0)
     # boxes
-    b = np.asarray(pred["boxes"]).reshape(-1, 9) if np.asarray(pred["boxes"]).size else np.zeros((0, 9))
     sc = np.asarray(pred["scores"]).reshape(-1); lb = np.asarray(pred["labels"]).reshape(-1).astype(int)
+    b = np.asarray(pred["boxes"]).reshape(len(sc), -1)[:, :9] if sc.size else np.zeros((0, 9))
     sel = np.where(sc >= score)[0]
     n_front = 0
     if len(sel):
