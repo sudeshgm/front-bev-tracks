@@ -1,0 +1,2 @@
+run_meta: rc=0 mode=smoke wall_s=243 infer_stage_s=193 fails= fbt=5f76337172b40edd2d498ea4f9d599bad8292a27 qd=28091c1532e869bc7aee91fc0aef6b3e6fd0b2e0
+kitti_city_cyclist_candidate: 6 frames, 10.92 s/frame, load 117.5 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 15 total, 15 in FC view, 0 behind ego (black cams)

@@ -1,0 +1,12 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+vlm on cuda, perception head on cuda:1
+kitti_city_cyclist_candidate__0000 (nuscenes): 300 boxes, 3 >=0.25, 37.65s
+kitti_city_cyclist_candidate__0006 (nuscenes): 300 boxes, 3 >=0.25, 5.52s
+kitti_city_cyclist_candidate__0012 (nuscenes): 300 boxes, 2 >=0.25, 5.55s
+kitti_city_cyclist_candidate__0018 (nuscenes): 300 boxes, 2 >=0.25, 5.57s
+kitti_city_cyclist_candidate__0024 (nuscenes): 300 boxes, 2 >=0.25, 5.61s
+kitti_city_cyclist_candidate__0029 (nuscenes): 300 boxes, 3 >=0.25, 5.63s
+{"load_s": 117.5, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 10.92}
+index, memory.used [MiB]
+0, 0 MiB
+1, 0 MiB
