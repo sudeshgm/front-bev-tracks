@@ -1,0 +1,30 @@
+{
+ "kitti_city_cyclist_candidate": {
+  "rc": 0,
+  "wall_s_incl_load": 11.09
+ },
+ "kitti_lane_split_candidate": {
+  "rc": 0,
+  "wall_s_incl_load": 4.2
+ },
+ "kitti_highway_sample": {
+  "rc": 0,
+  "wall_s_incl_load": 4.38
+ },
+ "kitti_highway_exit_approach": {
+  "rc": 0,
+  "wall_s_incl_load": 4.46
+ },
+ "kitti_highway_late": {
+  "rc": 0,
+  "wall_s_incl_load": 4.43
+ },
+ "kitti_highway_final": {
+  "rc": 0,
+  "wall_s_incl_load": 4.08
+ },
+ "ufld_repo_script": {
+  "rc": 1,
+  "wall_s": 26.09
+ }
+}

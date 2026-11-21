@@ -1,0 +1,4 @@
+fbt ffcd0558048e7ef3f02b531629afdc57645496d6
+TwinLiteNet 524141821c373c886443cf4254e3e87787c2c55e
+Ultra-Fast-Lane-Detection 353df107756b8c03c22c27201e33fc63d84ecfe6
+98ffc6c8abc98fda72052117249ce4e2dbc85e58cfcfc6ee2d42f5398c772463  TwinLiteNet/pretrained/best.pth

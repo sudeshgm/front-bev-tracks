@@ -1,0 +1,6 @@
+Wrote out/twinlite/kitti_city_cyclist_candidate_twinlite.mp4
+Wrote out/twinlite/kitti_lane_split_candidate_twinlite.mp4
+Wrote out/twinlite/kitti_highway_sample_twinlite.mp4
+Wrote out/twinlite/kitti_highway_exit_approach_twinlite.mp4
+Wrote out/twinlite/kitti_highway_late_twinlite.mp4
+Wrote out/twinlite/kitti_highway_final_twinlite.mp4
