@@ -1,2 +1,7 @@
-run_meta: rc=0 mode=smoke wall_s=243 infer_stage_s=193 fails= fbt=5f76337172b40edd2d498ea4f9d599bad8292a27 qd=28091c1532e869bc7aee91fc0aef6b3e6fd0b2e0
-kitti_city_cyclist_candidate: 6 frames, 10.92 s/frame, load 117.5 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 15 total, 15 in FC view, 0 behind ego (black cams)
+run_meta: rc=0 mode=all wall_s=1900 infer_stage_s=1767 fails= fbt=5f76337172b40edd2d498ea4f9d599bad8292a27 qd=28091c1532e869bc7aee91fc0aef6b3e6fd0b2e0
+kitti_city_cyclist_candidate: 30 frames, 6.72 s/frame, load 111.6 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 78 total, 78 in FC view, 0 behind ego (black cams)
+kitti_highway_exit_approach: 40 frames, 6.06 s/frame, load 55.6 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 1 total, 1 in FC view, 0 behind ego (black cams)
+kitti_highway_final: 30 frames, 6.06 s/frame, load 54.3 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 5 total, 5 in FC view, 0 behind ego (black cams)
+kitti_highway_late: 40 frames, 6.09 s/frame, load 55.6 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 5 total, 5 in FC view, 0 behind ego (black cams)
+kitti_highway_sample: 40 frames, 6.07 s/frame, load 54.4 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 3 total, 3 in FC view, 0 behind ego (black cams)
+kitti_lane_split_candidate: 30 frames, 6.06 s/frame, load 56.1 s, peak VRAM {'cuda:0': 10.78, 'cuda:1': 5.88}, boxes>=0.25: 607 total, 607 in FC view, 0 behind ego (black cams)

@@ -1,0 +1,166 @@
+{
+ "load_s": 56.1,
+ "dtype": "float16",
+ "attn": "sdpa",
+ "gpus": [
+  "Tesla T4",
+  "Tesla T4"
+ ],
+ "frames": {
+  "kitti_lane_split_candidate__0000": {
+   "s": 7.11,
+   "n_boxes": 300,
+   "n_over_0.25": 18
+  },
+  "kitti_lane_split_candidate__0001": {
+   "s": 5.69,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0002": {
+   "s": 5.7,
+   "n_boxes": 300,
+   "n_over_0.25": 23
+  },
+  "kitti_lane_split_candidate__0003": {
+   "s": 5.69,
+   "n_boxes": 300,
+   "n_over_0.25": 23
+  },
+  "kitti_lane_split_candidate__0004": {
+   "s": 5.7,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0005": {
+   "s": 5.82,
+   "n_boxes": 300,
+   "n_over_0.25": 23
+  },
+  "kitti_lane_split_candidate__0006": {
+   "s": 5.87,
+   "n_boxes": 300,
+   "n_over_0.25": 27
+  },
+  "kitti_lane_split_candidate__0007": {
+   "s": 5.89,
+   "n_boxes": 300,
+   "n_over_0.25": 21
+  },
+  "kitti_lane_split_candidate__0008": {
+   "s": 5.95,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0009": {
+   "s": 6.06,
+   "n_boxes": 300,
+   "n_over_0.25": 23
+  },
+  "kitti_lane_split_candidate__0010": {
+   "s": 6.09,
+   "n_boxes": 300,
+   "n_over_0.25": 22
+  },
+  "kitti_lane_split_candidate__0011": {
+   "s": 6.17,
+   "n_boxes": 300,
+   "n_over_0.25": 20
+  },
+  "kitti_lane_split_candidate__0012": {
+   "s": 6.22,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0013": {
+   "s": 6.3,
+   "n_boxes": 300,
+   "n_over_0.25": 22
+  },
+  "kitti_lane_split_candidate__0014": {
+   "s": 6.29,
+   "n_boxes": 300,
+   "n_over_0.25": 25
+  },
+  "kitti_lane_split_candidate__0015": {
+   "s": 6.15,
+   "n_boxes": 300,
+   "n_over_0.25": 28
+  },
+  "kitti_lane_split_candidate__0016": {
+   "s": 6.05,
+   "n_boxes": 300,
+   "n_over_0.25": 20
+  },
+  "kitti_lane_split_candidate__0017": {
+   "s": 6.02,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0018": {
+   "s": 6.02,
+   "n_boxes": 300,
+   "n_over_0.25": 22
+  },
+  "kitti_lane_split_candidate__0019": {
+   "s": 5.96,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0020": {
+   "s": 5.98,
+   "n_boxes": 300,
+   "n_over_0.25": 17
+  },
+  "kitti_lane_split_candidate__0021": {
+   "s": 6.03,
+   "n_boxes": 300,
+   "n_over_0.25": 14
+  },
+  "kitti_lane_split_candidate__0022": {
+   "s": 6.07,
+   "n_boxes": 300,
+   "n_over_0.25": 17
+  },
+  "kitti_lane_split_candidate__0023": {
+   "s": 6.12,
+   "n_boxes": 300,
+   "n_over_0.25": 17
+  },
+  "kitti_lane_split_candidate__0024": {
+   "s": 6.17,
+   "n_boxes": 300,
+   "n_over_0.25": 17
+  },
+  "kitti_lane_split_candidate__0025": {
+   "s": 6.15,
+   "n_boxes": 300,
+   "n_over_0.25": 17
+  },
+  "kitti_lane_split_candidate__0026": {
+   "s": 6.19,
+   "n_boxes": 300,
+   "n_over_0.25": 18
+  },
+  "kitti_lane_split_candidate__0027": {
+   "s": 6.15,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  },
+  "kitti_lane_split_candidate__0028": {
+   "s": 6.1,
+   "n_boxes": 300,
+   "n_over_0.25": 21
+  },
+  "kitti_lane_split_candidate__0029": {
+   "s": 6.07,
+   "n_boxes": 300,
+   "n_over_0.25": 19
+  }
+ },
+ "peak_mem_gib": {
+  "cuda:0": 10.78,
+  "cuda:1": 5.88
+ },
+ "sec_per_frame_mean": 6.06
+}

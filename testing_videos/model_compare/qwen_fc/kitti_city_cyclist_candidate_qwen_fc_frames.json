@@ -11,6 +11,66 @@
    "walkway": 1080
   }
  },
+ "kitti_city_cyclist_candidate__0001": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 37581,
+   "road_line": 1917,
+   "road_edge": 2243,
+   "crosswalk": 98,
+   "walkway": 481
+  }
+ },
+ "kitti_city_cyclist_candidate__0002": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 40790,
+   "road_line": 1916,
+   "road_edge": 2444,
+   "crosswalk": 174,
+   "walkway": 1037
+  }
+ },
+ "kitti_city_cyclist_candidate__0003": {
+  "n_boxes_over": 4,
+  "n_in_fc_view": 4,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 41273,
+   "road_line": 2081,
+   "road_edge": 2270,
+   "crosswalk": 182,
+   "walkway": 962
+  }
+ },
+ "kitti_city_cyclist_candidate__0004": {
+  "n_boxes_over": 5,
+  "n_in_fc_view": 5,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 46236,
+   "road_line": 2230,
+   "road_edge": 3432,
+   "crosswalk": 250,
+   "walkway": 1155
+  }
+ },
+ "kitti_city_cyclist_candidate__0005": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 43121,
+   "road_line": 2010,
+   "road_edge": 2987,
+   "crosswalk": 89,
+   "walkway": 857
+  }
+ },
  "kitti_city_cyclist_candidate__0006": {
   "n_boxes_over": 3,
   "n_in_fc_view": 3,
@@ -21,6 +81,66 @@
    "road_edge": 3277,
    "crosswalk": 198,
    "walkway": 1489
+  }
+ },
+ "kitti_city_cyclist_candidate__0007": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 50844,
+   "road_line": 1295,
+   "road_edge": 3004,
+   "crosswalk": 327,
+   "walkway": 1508
+  }
+ },
+ "kitti_city_cyclist_candidate__0008": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 49576,
+   "road_line": 980,
+   "road_edge": 3073,
+   "crosswalk": 272,
+   "walkway": 745
+  }
+ },
+ "kitti_city_cyclist_candidate__0009": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 44650,
+   "road_line": 1320,
+   "road_edge": 2714,
+   "crosswalk": 261,
+   "walkway": 954
+  }
+ },
+ "kitti_city_cyclist_candidate__0010": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 45324,
+   "road_line": 1671,
+   "road_edge": 2768,
+   "crosswalk": 166,
+   "walkway": 1524
+  }
+ },
+ "kitti_city_cyclist_candidate__0011": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 44772,
+   "road_line": 1585,
+   "road_edge": 2990,
+   "crosswalk": 242,
+   "walkway": 984
   }
  },
  "kitti_city_cyclist_candidate__0012": {
@@ -35,6 +155,66 @@
    "walkway": 744
   }
  },
+ "kitti_city_cyclist_candidate__0013": {
+  "n_boxes_over": 4,
+  "n_in_fc_view": 4,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 46341,
+   "road_line": 1438,
+   "road_edge": 2618,
+   "crosswalk": 239,
+   "walkway": 979
+  }
+ },
+ "kitti_city_cyclist_candidate__0014": {
+  "n_boxes_over": 1,
+  "n_in_fc_view": 1,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 51847,
+   "road_line": 1122,
+   "road_edge": 2308,
+   "crosswalk": 270,
+   "walkway": 594
+  }
+ },
+ "kitti_city_cyclist_candidate__0015": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 39111,
+   "road_line": 1629,
+   "road_edge": 1790,
+   "crosswalk": 0,
+   "walkway": 539
+  }
+ },
+ "kitti_city_cyclist_candidate__0016": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 39678,
+   "road_line": 1194,
+   "road_edge": 2251,
+   "crosswalk": 74,
+   "walkway": 1035
+  }
+ },
+ "kitti_city_cyclist_candidate__0017": {
+  "n_boxes_over": 1,
+  "n_in_fc_view": 1,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 50183,
+   "road_line": 1318,
+   "road_edge": 2180,
+   "crosswalk": 217,
+   "walkway": 601
+  }
+ },
  "kitti_city_cyclist_candidate__0018": {
   "n_boxes_over": 2,
   "n_in_fc_view": 2,
@@ -47,6 +227,66 @@
    "walkway": 1311
   }
  },
+ "kitti_city_cyclist_candidate__0019": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 52327,
+   "road_line": 985,
+   "road_edge": 2288,
+   "crosswalk": 287,
+   "walkway": 749
+  }
+ },
+ "kitti_city_cyclist_candidate__0020": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 35964,
+   "road_line": 1019,
+   "road_edge": 2770,
+   "crosswalk": 238,
+   "walkway": 1201
+  }
+ },
+ "kitti_city_cyclist_candidate__0021": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 31147,
+   "road_line": 960,
+   "road_edge": 2656,
+   "crosswalk": 281,
+   "walkway": 991
+  }
+ },
+ "kitti_city_cyclist_candidate__0022": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 39978,
+   "road_line": 1387,
+   "road_edge": 2886,
+   "crosswalk": 213,
+   "walkway": 1137
+  }
+ },
+ "kitti_city_cyclist_candidate__0023": {
+  "n_boxes_over": 1,
+  "n_in_fc_view": 1,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 53754,
+   "road_line": 1271,
+   "road_edge": 2432,
+   "crosswalk": 136,
+   "walkway": 946
+  }
+ },
  "kitti_city_cyclist_candidate__0024": {
   "n_boxes_over": 2,
   "n_in_fc_view": 2,
@@ -57,6 +297,54 @@
    "road_edge": 2444,
    "crosswalk": 179,
    "walkway": 534
+  }
+ },
+ "kitti_city_cyclist_candidate__0025": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 54143,
+   "road_line": 1143,
+   "road_edge": 2908,
+   "crosswalk": 231,
+   "walkway": 371
+  }
+ },
+ "kitti_city_cyclist_candidate__0026": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 50208,
+   "road_line": 665,
+   "road_edge": 2534,
+   "crosswalk": 147,
+   "walkway": 1038
+  }
+ },
+ "kitti_city_cyclist_candidate__0027": {
+  "n_boxes_over": 3,
+  "n_in_fc_view": 3,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 57175,
+   "road_line": 1220,
+   "road_edge": 2139,
+   "crosswalk": 119,
+   "walkway": 901
+  }
+ },
+ "kitti_city_cyclist_candidate__0028": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 60361,
+   "road_line": 1328,
+   "road_edge": 2152,
+   "crosswalk": 71,
+   "walkway": 602
   }
  },
  "kitti_city_cyclist_candidate__0029": {

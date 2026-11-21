@@ -1,12 +1,241 @@
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
 vlm on cuda, perception head on cuda:1
-kitti_city_cyclist_candidate__0000 (nuscenes): 300 boxes, 3 >=0.25, 37.65s
-kitti_city_cyclist_candidate__0006 (nuscenes): 300 boxes, 3 >=0.25, 5.52s
-kitti_city_cyclist_candidate__0012 (nuscenes): 300 boxes, 2 >=0.25, 5.55s
-kitti_city_cyclist_candidate__0018 (nuscenes): 300 boxes, 2 >=0.25, 5.57s
-kitti_city_cyclist_candidate__0024 (nuscenes): 300 boxes, 2 >=0.25, 5.61s
-kitti_city_cyclist_candidate__0029 (nuscenes): 300 boxes, 3 >=0.25, 5.63s
-{"load_s": 117.5, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 10.92}
+kitti_city_cyclist_candidate__0000 (nuscenes): 300 boxes, 3 >=0.25, 36.70s
+kitti_city_cyclist_candidate__0001 (nuscenes): 300 boxes, 2 >=0.25, 5.35s
+kitti_city_cyclist_candidate__0002 (nuscenes): 300 boxes, 3 >=0.25, 5.28s
+kitti_city_cyclist_candidate__0003 (nuscenes): 300 boxes, 4 >=0.25, 5.31s
+kitti_city_cyclist_candidate__0004 (nuscenes): 300 boxes, 5 >=0.25, 5.33s
+kitti_city_cyclist_candidate__0005 (nuscenes): 300 boxes, 3 >=0.25, 5.34s
+kitti_city_cyclist_candidate__0006 (nuscenes): 300 boxes, 3 >=0.25, 5.39s
+kitti_city_cyclist_candidate__0007 (nuscenes): 300 boxes, 3 >=0.25, 5.40s
+kitti_city_cyclist_candidate__0008 (nuscenes): 300 boxes, 3 >=0.25, 5.44s
+kitti_city_cyclist_candidate__0009 (nuscenes): 300 boxes, 3 >=0.25, 5.49s
+kitti_city_cyclist_candidate__0010 (nuscenes): 300 boxes, 2 >=0.25, 5.52s
+kitti_city_cyclist_candidate__0011 (nuscenes): 300 boxes, 2 >=0.25, 5.53s
+kitti_city_cyclist_candidate__0012 (nuscenes): 300 boxes, 2 >=0.25, 5.56s
+kitti_city_cyclist_candidate__0013 (nuscenes): 300 boxes, 4 >=0.25, 5.59s
+kitti_city_cyclist_candidate__0014 (nuscenes): 300 boxes, 1 >=0.25, 5.62s
+kitti_city_cyclist_candidate__0015 (nuscenes): 300 boxes, 2 >=0.25, 5.69s
+kitti_city_cyclist_candidate__0016 (nuscenes): 300 boxes, 2 >=0.25, 5.69s
+kitti_city_cyclist_candidate__0017 (nuscenes): 300 boxes, 1 >=0.25, 5.78s
+kitti_city_cyclist_candidate__0018 (nuscenes): 300 boxes, 2 >=0.25, 5.71s
+kitti_city_cyclist_candidate__0019 (nuscenes): 300 boxes, 3 >=0.25, 5.80s
+kitti_city_cyclist_candidate__0020 (nuscenes): 300 boxes, 3 >=0.25, 5.82s
+kitti_city_cyclist_candidate__0021 (nuscenes): 300 boxes, 2 >=0.25, 5.82s
+kitti_city_cyclist_candidate__0022 (nuscenes): 300 boxes, 3 >=0.25, 5.86s
+kitti_city_cyclist_candidate__0023 (nuscenes): 300 boxes, 1 >=0.25, 5.94s
+kitti_city_cyclist_candidate__0024 (nuscenes): 300 boxes, 2 >=0.25, 6.00s
+kitti_city_cyclist_candidate__0025 (nuscenes): 300 boxes, 3 >=0.25, 6.02s
+kitti_city_cyclist_candidate__0026 (nuscenes): 300 boxes, 3 >=0.25, 6.10s
+kitti_city_cyclist_candidate__0027 (nuscenes): 300 boxes, 3 >=0.25, 6.17s
+kitti_city_cyclist_candidate__0028 (nuscenes): 300 boxes, 2 >=0.25, 6.24s
+kitti_city_cyclist_candidate__0029 (nuscenes): 300 boxes, 3 >=0.25, 6.21s
+{"load_s": 111.6, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 6.72}
+index, memory.used [MiB]
+0, 0 MiB
+1, 0 MiB
+vlm on cuda, perception head on cuda:1
+kitti_lane_split_candidate__0000 (nuscenes): 300 boxes, 18 >=0.25, 7.11s
+kitti_lane_split_candidate__0001 (nuscenes): 300 boxes, 19 >=0.25, 5.69s
+kitti_lane_split_candidate__0002 (nuscenes): 300 boxes, 23 >=0.25, 5.70s
+kitti_lane_split_candidate__0003 (nuscenes): 300 boxes, 23 >=0.25, 5.69s
+kitti_lane_split_candidate__0004 (nuscenes): 300 boxes, 19 >=0.25, 5.70s
+kitti_lane_split_candidate__0005 (nuscenes): 300 boxes, 23 >=0.25, 5.82s
+kitti_lane_split_candidate__0006 (nuscenes): 300 boxes, 27 >=0.25, 5.87s
+kitti_lane_split_candidate__0007 (nuscenes): 300 boxes, 21 >=0.25, 5.89s
+kitti_lane_split_candidate__0008 (nuscenes): 300 boxes, 19 >=0.25, 5.95s
+kitti_lane_split_candidate__0009 (nuscenes): 300 boxes, 23 >=0.25, 6.06s
+kitti_lane_split_candidate__0010 (nuscenes): 300 boxes, 22 >=0.25, 6.09s
+kitti_lane_split_candidate__0011 (nuscenes): 300 boxes, 20 >=0.25, 6.17s
+kitti_lane_split_candidate__0012 (nuscenes): 300 boxes, 19 >=0.25, 6.22s
+kitti_lane_split_candidate__0013 (nuscenes): 300 boxes, 22 >=0.25, 6.30s
+kitti_lane_split_candidate__0014 (nuscenes): 300 boxes, 25 >=0.25, 6.29s
+kitti_lane_split_candidate__0015 (nuscenes): 300 boxes, 28 >=0.25, 6.15s
+kitti_lane_split_candidate__0016 (nuscenes): 300 boxes, 20 >=0.25, 6.05s
+kitti_lane_split_candidate__0017 (nuscenes): 300 boxes, 19 >=0.25, 6.02s
+kitti_lane_split_candidate__0018 (nuscenes): 300 boxes, 22 >=0.25, 6.02s
+kitti_lane_split_candidate__0019 (nuscenes): 300 boxes, 19 >=0.25, 5.96s
+kitti_lane_split_candidate__0020 (nuscenes): 300 boxes, 17 >=0.25, 5.98s
+kitti_lane_split_candidate__0021 (nuscenes): 300 boxes, 14 >=0.25, 6.03s
+kitti_lane_split_candidate__0022 (nuscenes): 300 boxes, 17 >=0.25, 6.07s
+kitti_lane_split_candidate__0023 (nuscenes): 300 boxes, 17 >=0.25, 6.12s
+kitti_lane_split_candidate__0024 (nuscenes): 300 boxes, 17 >=0.25, 6.17s
+kitti_lane_split_candidate__0025 (nuscenes): 300 boxes, 17 >=0.25, 6.15s
+kitti_lane_split_candidate__0026 (nuscenes): 300 boxes, 18 >=0.25, 6.19s
+kitti_lane_split_candidate__0027 (nuscenes): 300 boxes, 19 >=0.25, 6.15s
+kitti_lane_split_candidate__0028 (nuscenes): 300 boxes, 21 >=0.25, 6.10s
+kitti_lane_split_candidate__0029 (nuscenes): 300 boxes, 19 >=0.25, 6.07s
+{"load_s": 56.1, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 6.06}
+index, memory.used [MiB]
+0, 0 MiB
+1, 0 MiB
+vlm on cuda, perception head on cuda:1
+kitti_highway_sample__0000 (nuscenes): 300 boxes, 0 >=0.25, 7.08s
+kitti_highway_sample__0001 (nuscenes): 300 boxes, 0 >=0.25, 5.71s
+kitti_highway_sample__0002 (nuscenes): 300 boxes, 3 >=0.25, 5.72s
+kitti_highway_sample__0003 (nuscenes): 300 boxes, 0 >=0.25, 5.75s
+kitti_highway_sample__0004 (nuscenes): 300 boxes, 0 >=0.25, 5.81s
+kitti_highway_sample__0005 (nuscenes): 300 boxes, 0 >=0.25, 5.82s
+kitti_highway_sample__0006 (nuscenes): 300 boxes, 0 >=0.25, 5.89s
+kitti_highway_sample__0007 (nuscenes): 300 boxes, 0 >=0.25, 5.96s
+kitti_highway_sample__0008 (nuscenes): 300 boxes, 0 >=0.25, 6.00s
+kitti_highway_sample__0009 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_sample__0010 (nuscenes): 300 boxes, 0 >=0.25, 6.08s
+kitti_highway_sample__0011 (nuscenes): 300 boxes, 0 >=0.25, 6.14s
+kitti_highway_sample__0012 (nuscenes): 300 boxes, 0 >=0.25, 6.21s
+kitti_highway_sample__0013 (nuscenes): 300 boxes, 0 >=0.25, 6.22s
+kitti_highway_sample__0014 (nuscenes): 300 boxes, 0 >=0.25, 6.22s
+kitti_highway_sample__0015 (nuscenes): 300 boxes, 0 >=0.25, 6.21s
+kitti_highway_sample__0016 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_sample__0017 (nuscenes): 300 boxes, 0 >=0.25, 6.17s
+kitti_highway_sample__0018 (nuscenes): 300 boxes, 0 >=0.25, 6.10s
+kitti_highway_sample__0019 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_sample__0020 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_sample__0021 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_sample__0022 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_sample__0023 (nuscenes): 300 boxes, 0 >=0.25, 6.06s
+kitti_highway_sample__0024 (nuscenes): 300 boxes, 0 >=0.25, 6.07s
+kitti_highway_sample__0025 (nuscenes): 300 boxes, 0 >=0.25, 6.10s
+kitti_highway_sample__0026 (nuscenes): 300 boxes, 0 >=0.25, 6.08s
+kitti_highway_sample__0027 (nuscenes): 300 boxes, 0 >=0.25, 6.06s
+kitti_highway_sample__0028 (nuscenes): 300 boxes, 0 >=0.25, 6.07s
+kitti_highway_sample__0029 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_sample__0030 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_sample__0031 (nuscenes): 300 boxes, 0 >=0.25, 6.14s
+kitti_highway_sample__0032 (nuscenes): 300 boxes, 0 >=0.25, 6.23s
+kitti_highway_sample__0033 (nuscenes): 300 boxes, 0 >=0.25, 6.13s
+kitti_highway_sample__0034 (nuscenes): 300 boxes, 0 >=0.25, 6.10s
+kitti_highway_sample__0035 (nuscenes): 300 boxes, 0 >=0.25, 6.08s
+kitti_highway_sample__0036 (nuscenes): 300 boxes, 0 >=0.25, 6.04s
+kitti_highway_sample__0037 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_sample__0038 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_sample__0039 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+{"load_s": 54.4, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 6.07}
+index, memory.used [MiB]
+0, 0 MiB
+1, 0 MiB
+vlm on cuda, perception head on cuda:1
+kitti_highway_exit_approach__0000 (nuscenes): 300 boxes, 1 >=0.25, 7.18s
+kitti_highway_exit_approach__0001 (nuscenes): 300 boxes, 0 >=0.25, 5.74s
+kitti_highway_exit_approach__0002 (nuscenes): 300 boxes, 0 >=0.25, 5.74s
+kitti_highway_exit_approach__0003 (nuscenes): 300 boxes, 0 >=0.25, 5.78s
+kitti_highway_exit_approach__0004 (nuscenes): 300 boxes, 0 >=0.25, 5.83s
+kitti_highway_exit_approach__0005 (nuscenes): 300 boxes, 0 >=0.25, 5.87s
+kitti_highway_exit_approach__0006 (nuscenes): 300 boxes, 0 >=0.25, 5.97s
+kitti_highway_exit_approach__0007 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_exit_approach__0008 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_exit_approach__0009 (nuscenes): 300 boxes, 0 >=0.25, 6.15s
+kitti_highway_exit_approach__0010 (nuscenes): 300 boxes, 0 >=0.25, 6.19s
+kitti_highway_exit_approach__0011 (nuscenes): 300 boxes, 0 >=0.25, 6.21s
+kitti_highway_exit_approach__0012 (nuscenes): 300 boxes, 0 >=0.25, 6.16s
+kitti_highway_exit_approach__0013 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_exit_approach__0014 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_exit_approach__0015 (nuscenes): 300 boxes, 0 >=0.25, 6.01s
+kitti_highway_exit_approach__0016 (nuscenes): 300 boxes, 0 >=0.25, 6.01s
+kitti_highway_exit_approach__0017 (nuscenes): 300 boxes, 0 >=0.25, 5.94s
+kitti_highway_exit_approach__0018 (nuscenes): 300 boxes, 0 >=0.25, 5.94s
+kitti_highway_exit_approach__0019 (nuscenes): 300 boxes, 0 >=0.25, 5.98s
+kitti_highway_exit_approach__0020 (nuscenes): 300 boxes, 0 >=0.25, 5.99s
+kitti_highway_exit_approach__0021 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_exit_approach__0022 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_exit_approach__0023 (nuscenes): 300 boxes, 0 >=0.25, 6.08s
+kitti_highway_exit_approach__0024 (nuscenes): 300 boxes, 0 >=0.25, 6.13s
+kitti_highway_exit_approach__0025 (nuscenes): 300 boxes, 0 >=0.25, 6.20s
+kitti_highway_exit_approach__0026 (nuscenes): 300 boxes, 0 >=0.25, 6.16s
+kitti_highway_exit_approach__0027 (nuscenes): 300 boxes, 0 >=0.25, 6.11s
+kitti_highway_exit_approach__0028 (nuscenes): 300 boxes, 0 >=0.25, 6.04s
+kitti_highway_exit_approach__0029 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_exit_approach__0030 (nuscenes): 300 boxes, 0 >=0.25, 5.99s
+kitti_highway_exit_approach__0031 (nuscenes): 300 boxes, 0 >=0.25, 5.97s
+kitti_highway_exit_approach__0032 (nuscenes): 300 boxes, 0 >=0.25, 6.00s
+kitti_highway_exit_approach__0033 (nuscenes): 300 boxes, 0 >=0.25, 6.02s
+kitti_highway_exit_approach__0034 (nuscenes): 300 boxes, 0 >=0.25, 6.02s
+kitti_highway_exit_approach__0035 (nuscenes): 300 boxes, 0 >=0.25, 6.04s
+kitti_highway_exit_approach__0036 (nuscenes): 300 boxes, 0 >=0.25, 6.06s
+kitti_highway_exit_approach__0037 (nuscenes): 300 boxes, 0 >=0.25, 6.10s
+kitti_highway_exit_approach__0038 (nuscenes): 300 boxes, 0 >=0.25, 6.11s
+kitti_highway_exit_approach__0039 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+{"load_s": 55.6, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 6.06}
+index, memory.used [MiB]
+0, 0 MiB
+1, 0 MiB
+vlm on cuda, perception head on cuda:1
+kitti_highway_late__0000 (nuscenes): 300 boxes, 0 >=0.25, 7.25s
+kitti_highway_late__0001 (nuscenes): 300 boxes, 0 >=0.25, 5.77s
+kitti_highway_late__0002 (nuscenes): 300 boxes, 0 >=0.25, 5.78s
+kitti_highway_late__0003 (nuscenes): 300 boxes, 0 >=0.25, 5.81s
+kitti_highway_late__0004 (nuscenes): 300 boxes, 0 >=0.25, 5.86s
+kitti_highway_late__0005 (nuscenes): 300 boxes, 0 >=0.25, 5.91s
+kitti_highway_late__0006 (nuscenes): 300 boxes, 0 >=0.25, 6.04s
+kitti_highway_late__0007 (nuscenes): 300 boxes, 0 >=0.25, 6.07s
+kitti_highway_late__0008 (nuscenes): 300 boxes, 0 >=0.25, 6.19s
+kitti_highway_late__0009 (nuscenes): 300 boxes, 0 >=0.25, 6.24s
+kitti_highway_late__0010 (nuscenes): 300 boxes, 0 >=0.25, 6.28s
+kitti_highway_late__0011 (nuscenes): 300 boxes, 0 >=0.25, 6.29s
+kitti_highway_late__0012 (nuscenes): 300 boxes, 0 >=0.25, 6.16s
+kitti_highway_late__0013 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_late__0014 (nuscenes): 300 boxes, 0 >=0.25, 6.00s
+kitti_highway_late__0015 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_late__0016 (nuscenes): 300 boxes, 0 >=0.25, 6.01s
+kitti_highway_late__0017 (nuscenes): 300 boxes, 0 >=0.25, 5.99s
+kitti_highway_late__0018 (nuscenes): 300 boxes, 0 >=0.25, 6.01s
+kitti_highway_late__0019 (nuscenes): 300 boxes, 0 >=0.25, 6.05s
+kitti_highway_late__0020 (nuscenes): 300 boxes, 0 >=0.25, 6.10s
+kitti_highway_late__0021 (nuscenes): 300 boxes, 0 >=0.25, 6.16s
+kitti_highway_late__0022 (nuscenes): 300 boxes, 0 >=0.25, 6.13s
+kitti_highway_late__0023 (nuscenes): 300 boxes, 0 >=0.25, 6.14s
+kitti_highway_late__0024 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_late__0025 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_late__0026 (nuscenes): 300 boxes, 0 >=0.25, 6.07s
+kitti_highway_late__0027 (nuscenes): 300 boxes, 0 >=0.25, 6.02s
+kitti_highway_late__0028 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_late__0029 (nuscenes): 300 boxes, 0 >=0.25, 6.03s
+kitti_highway_late__0030 (nuscenes): 300 boxes, 0 >=0.25, 6.04s
+kitti_highway_late__0031 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_late__0032 (nuscenes): 300 boxes, 0 >=0.25, 6.08s
+kitti_highway_late__0033 (nuscenes): 300 boxes, 0 >=0.25, 6.10s
+kitti_highway_late__0034 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_late__0035 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_late__0036 (nuscenes): 300 boxes, 2 >=0.25, 6.08s
+kitti_highway_late__0037 (nuscenes): 300 boxes, 0 >=0.25, 6.12s
+kitti_highway_late__0038 (nuscenes): 300 boxes, 2 >=0.25, 6.08s
+kitti_highway_late__0039 (nuscenes): 300 boxes, 1 >=0.25, 6.08s
+{"load_s": 55.6, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 6.09}
+index, memory.used [MiB]
+0, 0 MiB
+1, 0 MiB
+vlm on cuda, perception head on cuda:1
+kitti_highway_final__0000 (nuscenes): 300 boxes, 0 >=0.25, 7.13s
+kitti_highway_final__0001 (nuscenes): 300 boxes, 1 >=0.25, 5.75s
+kitti_highway_final__0002 (nuscenes): 300 boxes, 2 >=0.25, 5.63s
+kitti_highway_final__0003 (nuscenes): 300 boxes, 0 >=0.25, 5.77s
+kitti_highway_final__0004 (nuscenes): 300 boxes, 0 >=0.25, 5.80s
+kitti_highway_final__0005 (nuscenes): 300 boxes, 1 >=0.25, 5.86s
+kitti_highway_final__0006 (nuscenes): 300 boxes, 0 >=0.25, 5.85s
+kitti_highway_final__0007 (nuscenes): 300 boxes, 0 >=0.25, 5.99s
+kitti_highway_final__0008 (nuscenes): 300 boxes, 1 >=0.25, 6.01s
+kitti_highway_final__0009 (nuscenes): 300 boxes, 0 >=0.25, 6.07s
+kitti_highway_final__0010 (nuscenes): 300 boxes, 0 >=0.25, 6.15s
+kitti_highway_final__0011 (nuscenes): 300 boxes, 0 >=0.25, 6.15s
+kitti_highway_final__0012 (nuscenes): 300 boxes, 0 >=0.25, 6.22s
+kitti_highway_final__0013 (nuscenes): 300 boxes, 0 >=0.25, 6.24s
+kitti_highway_final__0014 (nuscenes): 300 boxes, 0 >=0.25, 6.21s
+kitti_highway_final__0015 (nuscenes): 300 boxes, 0 >=0.25, 6.16s
+kitti_highway_final__0016 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_final__0017 (nuscenes): 300 boxes, 0 >=0.25, 6.02s
+kitti_highway_final__0018 (nuscenes): 300 boxes, 0 >=0.25, 5.99s
+kitti_highway_final__0019 (nuscenes): 300 boxes, 0 >=0.25, 6.02s
+kitti_highway_final__0020 (nuscenes): 300 boxes, 0 >=0.25, 6.02s
+kitti_highway_final__0021 (nuscenes): 300 boxes, 0 >=0.25, 6.01s
+kitti_highway_final__0022 (nuscenes): 300 boxes, 0 >=0.25, 6.08s
+kitti_highway_final__0023 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_final__0024 (nuscenes): 300 boxes, 0 >=0.25, 6.09s
+kitti_highway_final__0025 (nuscenes): 300 boxes, 0 >=0.25, 6.13s
+kitti_highway_final__0026 (nuscenes): 300 boxes, 0 >=0.25, 6.13s
+kitti_highway_final__0027 (nuscenes): 300 boxes, 0 >=0.25, 6.13s
+kitti_highway_final__0028 (nuscenes): 300 boxes, 0 >=0.25, 6.07s
+kitti_highway_final__0029 (nuscenes): 300 boxes, 0 >=0.25, 6.06s
+{"load_s": 54.3, "dtype": "float16", "attn": "sdpa", "gpus": ["Tesla T4", "Tesla T4"], "peak_mem_gib": {"cuda:0": 10.78, "cuda:1": 5.88}, "sec_per_frame_mean": 6.06}
 index, memory.used [MiB]
 0, 0 MiB
 1, 0 MiB

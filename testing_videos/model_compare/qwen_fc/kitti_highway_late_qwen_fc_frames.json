@@ -1,0 +1,482 @@
+{
+ "kitti_highway_late__0000": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 21786,
+   "road_line": 1968,
+   "road_edge": 2220,
+   "crosswalk": 0,
+   "walkway": 1659
+  }
+ },
+ "kitti_highway_late__0001": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 26336,
+   "road_line": 2343,
+   "road_edge": 1896,
+   "crosswalk": 0,
+   "walkway": 1079
+  }
+ },
+ "kitti_highway_late__0002": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27147,
+   "road_line": 2433,
+   "road_edge": 1757,
+   "crosswalk": 0,
+   "walkway": 1471
+  }
+ },
+ "kitti_highway_late__0003": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 29925,
+   "road_line": 2142,
+   "road_edge": 1942,
+   "crosswalk": 0,
+   "walkway": 875
+  }
+ },
+ "kitti_highway_late__0004": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27328,
+   "road_line": 1987,
+   "road_edge": 2071,
+   "crosswalk": 0,
+   "walkway": 1348
+  }
+ },
+ "kitti_highway_late__0005": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 34196,
+   "road_line": 2571,
+   "road_edge": 1650,
+   "crosswalk": 0,
+   "walkway": 1879
+  }
+ },
+ "kitti_highway_late__0006": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27803,
+   "road_line": 2422,
+   "road_edge": 1945,
+   "crosswalk": 0,
+   "walkway": 1677
+  }
+ },
+ "kitti_highway_late__0007": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 32932,
+   "road_line": 2570,
+   "road_edge": 1866,
+   "crosswalk": 0,
+   "walkway": 1339
+  }
+ },
+ "kitti_highway_late__0008": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 30028,
+   "road_line": 2396,
+   "road_edge": 1966,
+   "crosswalk": 0,
+   "walkway": 748
+  }
+ },
+ "kitti_highway_late__0009": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 29312,
+   "road_line": 2550,
+   "road_edge": 2752,
+   "crosswalk": 0,
+   "walkway": 840
+  }
+ },
+ "kitti_highway_late__0010": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 28847,
+   "road_line": 2428,
+   "road_edge": 2653,
+   "crosswalk": 0,
+   "walkway": 198
+  }
+ },
+ "kitti_highway_late__0011": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 28005,
+   "road_line": 2805,
+   "road_edge": 2721,
+   "crosswalk": 0,
+   "walkway": 801
+  }
+ },
+ "kitti_highway_late__0012": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27167,
+   "road_line": 2403,
+   "road_edge": 2565,
+   "crosswalk": 0,
+   "walkway": 193
+  }
+ },
+ "kitti_highway_late__0013": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 26590,
+   "road_line": 2512,
+   "road_edge": 2728,
+   "crosswalk": 17,
+   "walkway": 162
+  }
+ },
+ "kitti_highway_late__0014": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 24398,
+   "road_line": 2124,
+   "road_edge": 2778,
+   "crosswalk": 0,
+   "walkway": 32
+  }
+ },
+ "kitti_highway_late__0015": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 24390,
+   "road_line": 2167,
+   "road_edge": 2986,
+   "crosswalk": 0,
+   "walkway": 114
+  }
+ },
+ "kitti_highway_late__0016": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 24246,
+   "road_line": 1704,
+   "road_edge": 2794,
+   "crosswalk": 11,
+   "walkway": 132
+  }
+ },
+ "kitti_highway_late__0017": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 25424,
+   "road_line": 1781,
+   "road_edge": 3600,
+   "crosswalk": 100,
+   "walkway": 290
+  }
+ },
+ "kitti_highway_late__0018": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 23270,
+   "road_line": 1773,
+   "road_edge": 3818,
+   "crosswalk": 103,
+   "walkway": 91
+  }
+ },
+ "kitti_highway_late__0019": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 25669,
+   "road_line": 1630,
+   "road_edge": 3840,
+   "crosswalk": 98,
+   "walkway": 49
+  }
+ },
+ "kitti_highway_late__0020": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27142,
+   "road_line": 1422,
+   "road_edge": 3217,
+   "crosswalk": 103,
+   "walkway": 59
+  }
+ },
+ "kitti_highway_late__0021": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 26678,
+   "road_line": 1287,
+   "road_edge": 3200,
+   "crosswalk": 110,
+   "walkway": 254
+  }
+ },
+ "kitti_highway_late__0022": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27344,
+   "road_line": 1118,
+   "road_edge": 3291,
+   "crosswalk": 100,
+   "walkway": 835
+  }
+ },
+ "kitti_highway_late__0023": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 30221,
+   "road_line": 1086,
+   "road_edge": 4134,
+   "crosswalk": 63,
+   "walkway": 1186
+  }
+ },
+ "kitti_highway_late__0024": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 28316,
+   "road_line": 1294,
+   "road_edge": 4128,
+   "crosswalk": 170,
+   "walkway": 1303
+  }
+ },
+ "kitti_highway_late__0025": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 28475,
+   "road_line": 1235,
+   "road_edge": 3974,
+   "crosswalk": 219,
+   "walkway": 901
+  }
+ },
+ "kitti_highway_late__0026": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 24282,
+   "road_line": 1597,
+   "road_edge": 4588,
+   "crosswalk": 238,
+   "walkway": 856
+  }
+ },
+ "kitti_highway_late__0027": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 21257,
+   "road_line": 1240,
+   "road_edge": 4502,
+   "crosswalk": 59,
+   "walkway": 219
+  }
+ },
+ "kitti_highway_late__0028": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 24222,
+   "road_line": 1389,
+   "road_edge": 4476,
+   "crosswalk": 60,
+   "walkway": 209
+  }
+ },
+ "kitti_highway_late__0029": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 26506,
+   "road_line": 1124,
+   "road_edge": 4639,
+   "crosswalk": 114,
+   "walkway": 205
+  }
+ },
+ "kitti_highway_late__0030": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 29579,
+   "road_line": 1172,
+   "road_edge": 4545,
+   "crosswalk": 195,
+   "walkway": 402
+  }
+ },
+ "kitti_highway_late__0031": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 31976,
+   "road_line": 1122,
+   "road_edge": 4705,
+   "crosswalk": 86,
+   "walkway": 334
+  }
+ },
+ "kitti_highway_late__0032": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 28056,
+   "road_line": 1090,
+   "road_edge": 3994,
+   "crosswalk": 104,
+   "walkway": 175
+  }
+ },
+ "kitti_highway_late__0033": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 21263,
+   "road_line": 1251,
+   "road_edge": 3946,
+   "crosswalk": 30,
+   "walkway": 425
+  }
+ },
+ "kitti_highway_late__0034": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27559,
+   "road_line": 1220,
+   "road_edge": 4689,
+   "crosswalk": 115,
+   "walkway": 752
+  }
+ },
+ "kitti_highway_late__0035": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 29212,
+   "road_line": 1204,
+   "road_edge": 5049,
+   "crosswalk": 79,
+   "walkway": 998
+  }
+ },
+ "kitti_highway_late__0036": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 25338,
+   "road_line": 1148,
+   "road_edge": 4254,
+   "crosswalk": 70,
+   "walkway": 765
+  }
+ },
+ "kitti_highway_late__0037": {
+  "n_boxes_over": 0,
+  "n_in_fc_view": 0,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 27243,
+   "road_line": 1018,
+   "road_edge": 4467,
+   "crosswalk": 65,
+   "walkway": 637
+  }
+ },
+ "kitti_highway_late__0038": {
+  "n_boxes_over": 2,
+  "n_in_fc_view": 2,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 30699,
+   "road_line": 1080,
+   "road_edge": 5436,
+   "crosswalk": 120,
+   "walkway": 1220
+  }
+ },
+ "kitti_highway_late__0039": {
+  "n_boxes_over": 1,
+  "n_in_fc_view": 1,
+  "n_behind_ego": 0,
+  "map_px": {
+   "driveable_surface": 28120,
+   "road_line": 1449,
+   "road_edge": 4545,
+   "crosswalk": 40,
+   "walkway": 771
+  }
+ }
+}

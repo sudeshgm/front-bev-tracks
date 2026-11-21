@@ -1,0 +1,216 @@
+{
+ "load_s": 55.6,
+ "dtype": "float16",
+ "attn": "sdpa",
+ "gpus": [
+  "Tesla T4",
+  "Tesla T4"
+ ],
+ "frames": {
+  "kitti_highway_exit_approach__0000": {
+   "s": 7.18,
+   "n_boxes": 300,
+   "n_over_0.25": 1
+  },
+  "kitti_highway_exit_approach__0001": {
+   "s": 5.74,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0002": {
+   "s": 5.74,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0003": {
+   "s": 5.78,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0004": {
+   "s": 5.83,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0005": {
+   "s": 5.87,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0006": {
+   "s": 5.97,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0007": {
+   "s": 6.05,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0008": {
+   "s": 6.12,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0009": {
+   "s": 6.15,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0010": {
+   "s": 6.19,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0011": {
+   "s": 6.21,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0012": {
+   "s": 6.16,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0013": {
+   "s": 6.12,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0014": {
+   "s": 6.05,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0015": {
+   "s": 6.01,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0016": {
+   "s": 6.01,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0017": {
+   "s": 5.94,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0018": {
+   "s": 5.94,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0019": {
+   "s": 5.98,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0020": {
+   "s": 5.99,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0021": {
+   "s": 6.03,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0022": {
+   "s": 6.03,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0023": {
+   "s": 6.08,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0024": {
+   "s": 6.13,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0025": {
+   "s": 6.2,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0026": {
+   "s": 6.16,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0027": {
+   "s": 6.11,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0028": {
+   "s": 6.04,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0029": {
+   "s": 6.03,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0030": {
+   "s": 5.99,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0031": {
+   "s": 5.97,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0032": {
+   "s": 6.0,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0033": {
+   "s": 6.02,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0034": {
+   "s": 6.02,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0035": {
+   "s": 6.04,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0036": {
+   "s": 6.06,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0037": {
+   "s": 6.1,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0038": {
+   "s": 6.11,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  },
+  "kitti_highway_exit_approach__0039": {
+   "s": 6.09,
+   "n_boxes": 300,
+   "n_over_0.25": 0
+  }
+ },
+ "peak_mem_gib": {
+  "cuda:0": 10.78,
+  "cuda:1": 5.88
+ },
+ "sec_per_frame_mean": 6.06
+}
