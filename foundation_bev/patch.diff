@@ -1,844 +1,433 @@
-diff -ruN -x __pycache__ iter8_spec/src/foundation_bev.py iter9_spec/src/foundation_bev.py
---- iter8_spec/src/foundation_bev.py	2026-11-24 10:47:02.142482353 +0530
-+++ iter9_spec/src/foundation_bev.py	2026-11-24 13:30:19.264958945 +0530
-@@ -49,6 +49,12 @@
- COL_EDGE = (40, 140, 255)
- COL_EGO = (230, 230, 230)
- STATIC_PIN_MPS = 1.5  # iter6
-+# iter9: static test in the ego-compensated WORLD frame (VO heading + selected travel). The iter6 test only removes
-+# ego translation, so with ego yaw a parked car sweeps sideways (lane_split: ~3 m/s at 13 deg/s yaw) and longitudinally,
-+# is not pinned and draws a short diagonal trail (lane_split f29 z 12-18 / 25, munich f692 right side).
-+WORLD_PIN = os.environ.get("FBEV_WORLD_PIN", "0") == "1"  # iter9: VO-heading world pin; OFF (VO psi does not fit track motion)
-+RHT_PIN = os.environ.get("FBEV_RHT_PIN", "1") == "1"  # iter9: right-hand traffic: right-side track moving backward -> dot
-+RHT_MAX_RATIO = float(os.environ.get("FBEV_RHT_MAX_RATIO", "1.5"))  # backward speed <= ratio x ego speed
- STATIC_PERP_RATIO = 1.0  # iter7: |v_lat| > ratio * |v_long| -> sideways-dominant track: dot at current position, no trail
- COL_PATH = (255, 255, 255)  # iter4: ego path white, distinct from lines
- COL_SPLIT = (40, 200, 255)  # iter4: exit/split edges + gore outline, lighter orange
-@@ -667,8 +673,27 @@
-         return out
- 
- 
-+def world_static_pin(tr, hist_, now, tf, ego, fps, thr=None):
-+    """iter9: if the track's ground speed in the world frame (ego pose: VO heading psi + selected travel) is below
-+    STATIC_PIN_MPS, return its median world position expressed in the CURRENT ego frame, else None."""
-+    thr = STATIC_PIN_MPS if thr is None else thr
-+    fr = [int(r["frame"]) for r in hist_]
-+    if len(fr) < 5 or max(fr) >= len(ego["psi"]):
-+        return None
-+    xe = np.array([r["smooth"][0] for r in hist_], float)
-+    ze = np.array([r["smooth"][1] - tf(r["frame"]) for r in hist_], float)  # ego-relative z at each frame
-+    W = np.array([EM.ego_to_world(ego, f, x, z) for f, x, z in zip(fr, xe, ze)], float)
-+    dt_ = max((fr[-1] - fr[0]) / fps, 1e-3)
-+    v_w = float(np.hypot(*(np.median(W[-3:], 0) - np.median(W[:3], 0)))) / dt_
-+    if v_w >= thr:
-+        return None
-+    mx, mz = np.median(W, 0)
-+    ex, ez = EM.world_to_ego(ego, now, mx, mz)
-+    return float(ex), float(ez)
-+
-+
- def draw_bev2(h, now, tracks_by_frame, lanes, edges, speed, fps, tail, bev_w=BEV_W, travel_fn=None, ego_path=None,
--              static_stub=3, gores=None, s_sel=None):
-+              static_stub=3, gores=None, s_sel=None, ego=None):
-     panel = np.full((h, bev_w, 3), 22, np.uint8)
-     scale = bev_scale(h, bev_w)
-     for metre in (10, 20, 30, 40):
-@@ -725,8 +750,22 @@
-                 perp = v_lat > STATIC_PERP_RATIO * v_g and v_lat > 1.0
-                 if os.environ.get("FBEV_DEBUG_PIN") and now == int(os.environ["FBEV_DEBUG_PIN"]):
-                     print("PIN", tr.get("id"), len(hist_), round(v_g, 2), round(v_lat, 2), perp, rel[-1], rel[0], file=sys.stderr)
-+                pin_w = world_static_pin(tr, hist_, now, tf, ego, fps) if (ego is not None and WORLD_PIN) else None
-+                # iter9 (lane_split f29 #14 / #3, munich f692 #90): a track first seen right of the ego (x > 1.5 m) and
-+                # moving BACKWARD in the world (against the ego heading, mostly longitudinal) cannot be oncoming traffic
-+                # under right-hand driving: it is a parked car whose tracker velocity follows depth / association jumps
-+                # along the parked row (or an ego-speed error). Dot at its current position, no trail.
-+                dz_w = float(np.median(wz[-3:]) - np.median(wz[:3])) / dt_
-+                k0 = max(1, now - 10)
-+                v_ego = float(np.median(np.diff(np.asarray(s_sel[k0 - 1:now + 1], float)))) * fps if now >= 1 else 0.0
-+                rht = (RHT_PIN and hist_[0]["smooth"][0] > 1.5 and dz_w < 0 and v_lat < v_g
-+                       and v_g <= RHT_MAX_RATIO * max(v_ego, 0.5))
-                 if v_g < STATIC_PIN_MPS:
-                     rel = [(float(np.median(wx)), float(np.median(wz)) - float(s_sel[now]))]
-+                elif rht:
-+                    rel = rel[-1:]
-+                elif pin_w is not None:
-+                    rel = [pin_w]  # iter9: parked car whose ego-frame drift comes from ego yaw: dot at its world position
-                 elif perp:
-                     rel = rel[-1:]
-         else:
-@@ -1003,6 +1042,7 @@
-                                    "depth_z": o["depth_z"], "vplane": o["vplane"]} for o in objs],
-                          "lane_boxes": [[round(float(v), 1) for v in b] for b in lane_boxes],
-                          "edge_boxes": [[round(float(v), 1) for v in b] for b in edge_boxes]})
-+        ob["car_boxes"] = [[float(v) for v in o["box"][:4]] for o in objs if o.get("cls") == "car"]  # iter9: kerb rule
-         obs_all.append(ob)
-         objs_all.append(objs)
-         has_all.append(has)
-@@ -1096,6 +1136,7 @@
-     ds_line = ds if args.line_motion == "straight" else 0.0
-     et = EdgePair(args)
-     lanes_live, edges_live, raw_counts = [], [], []
-+    edges_raw_live = []
-     gores_live = []
-     stage_lines = LM.StageLines(fps=fps) if args.lines == "mt" else None
-     n_agg = args.lane_agg_frames if args.lane_agg_frames > 0 else (6 if fps <= 10 else 15)
-@@ -1121,8 +1162,10 @@
-                 paint_bev[v_[okp].astype(int), u_[okp].astype(int)] = 1
-                 paint_bev = cv2.dilate(paint_bev, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 15)))
-             road_bev = np.unpackbits(ob["road_bev"])[: bev_hw[0] * bev_hw[1]].reshape(bev_hw).astype(bool)
-+            cars_k = LM.car_footprints(ob.get("car_boxes"), gm.lift)  # iter9: parked-car rows -> kerb behind them
-             lz, ez, gz = stage_lines.step(k, road_bev, paint_bev > 0, bev_valid, IP.RES,
--                                          ds=float(s_ego[k] - s_ego[k - 1]) if k else 0.0)
-+                                          ds=float(s_ego[k] - s_ego[k - 1]) if k else 0.0, cars=cars_k)
-+            edges_raw_live.append({r_: np.where(np.isfinite(x_), x_, np.nan) for r_, x_ in stage_lines.last_raw.items()})
-             # iter5: iter3-style nearest L/R fallback when lines_mt has no confident lane on that side at z~10 m
-             fits_l, efits_l, _ = fit_frame_lines(ob, gm, prior, args, agg=lane_agg, ds_k=float(s_ego[k] - s_ego[k - 1]) if k else 0.0)
-             leg = lt.step(k, fits_l, ds_line); et.step(k, efits_l, ds_line)
-@@ -1141,6 +1184,12 @@
-         raw_counts.append({"lane_px": int(len(ob["lane_px"])), "edge_px_L": int(len(ob["edge_px"][0])),
-                            "edge_px_R": int(len(ob["edge_px"][1])), "lane_fits": len(fits), "edge_fits": len(efits),
-                            "rail_pairs": int(ob["n_rail_pairs"])})
-+    if stage_lines is not None and LM.LINE_SMOOTH_S > 0:
-+        # iter9: zero-lag centred smoothing of lanes and edges (+-0.3 s, symmetric window)
-+        # (travel shift by default: lane / edge holds use the same convention; the VO-yaw pose variant bent lane_split R)
-+        egp = ego_pose if LM.LINE_SMOOTH_POSE else None
-+        lanes_live = LM.centre_smooth_lines(lanes_live, s_ego, fps, kind="lanes", ego=egp)
-+        edges_live = LM.centre_smooth_lines(edges_live, s_ego, fps, kind="edges", ego=egp)
+diff -ruN -x __pycache__ iter9_spec/src/foundation_bev.py iter10_spec/src/foundation_bev.py
+--- iter9_spec/src/foundation_bev.py	2026-11-24 13:30:19.264958945 +0530
++++ iter10_spec/src/foundation_bev.py	2026-11-24 15:46:44.028236166 +0530
+@@ -1190,6 +1190,11 @@
+         egp = ego_pose if LM.LINE_SMOOTH_POSE else None
+         lanes_live = LM.centre_smooth_lines(lanes_live, s_ego, fps, kind="lanes", ego=egp)
+         edges_live = LM.centre_smooth_lines(edges_live, s_ego, fps, kind="edges", ego=egp)
++    if stage_lines is not None:
++        # iter10: ego lane-pair width smoothing (+-1.5 s, the wobbling line absorbs it) and backfill of the lanes
++        # confirmed in the first 0.3 s into the clip start (offline, like the centred smoothing)
++        lanes_live = LM.pair_width_smooth(lanes_live, s_ego, fps)
++        lanes_live = LM.lane_backfill(lanes_live, s_ego, fps)
      if args.line_window > 1 and stage_lines is None:
          def recentre(live_list, hist):
              sm = {key: BS.centred_smooth(hh, ds_line, args.line_window) for key, hh in hist.items()}
-@@ -1178,7 +1227,7 @@
-         bev = draw_bev2(h, k, tracks, lanes_live[k], edges_live[k], speed, fps, args.tail,
-                         travel_fn=lambda f: speed * f / fps,
-                         ego_path=EM.ego_path_in_current_frame(ego_pose, k, back=int(2 * fps), ahead_s=2.0, fps=fps),
--                        gores=gores_live[k], s_sel=s_ego)
-+                        gores=gores_live[k], s_sel=s_ego, ego=ego_pose)
-         im = np.hstack([front, bev])
-         sw.write(im)
-         if k in still_frames:
-@@ -1192,7 +1241,7 @@
+@@ -1241,14 +1246,18 @@
                  outl.append({"id": int(r["id"]), "side": r.get("side"), "c": [float(v) for v in r["c"]],
                               "zmin": float(r["zmin"]), "zmax": float(r["zmax"]), "hits": int(r["hits"]),
                               "held": bool(r["held"]), "parent": r.get("parent"), "fork_z": r.get("fork_z"), "fallback": bool(r.get("fallback", False)),
--                             "role": r.get("role")})
-+                             "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False))})
+-                             "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False))})
++                             "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False)),
++                             "backfill": bool(r.get("backfill", False))})
              return outl
  
          lb = [BS.sample_curve(r, 1.0, MAX_DIST) for r in lanes_live[k]]
-@@ -1205,6 +1254,11 @@
+         eb = [BS.sample_curve(r, 1.0, MAX_DIST) for r in edges_live[k]]
++        # iter10: keep records and *_bev aligned (a < 2-point polyline used to be dropped from *_bev only)
++        lrec = [r for r, p in zip(lanes_live[k], lb) if len(p) >= 2]; lb = [p for p in lb if len(p) >= 2]
++        erec = [r for r, p in zip(edges_live[k], eb) if len(p) >= 2]; eb = [p for p in eb if len(p) >= 2]
+         poly_frames.append({
+             "frame": k,
+-            "lanes": pack_lines(lanes_live[k]), "edges": pack_lines(edges_live[k]),
++            "lanes": pack_lines(lrec), "edges": pack_lines(erec),
+             "lanes_bev": [p.round(3).tolist() for p in lb if len(p) >= 2],
+             "edges_bev": [p.round(3).tolist() for p in eb if len(p) >= 2],
              "lanes_px": [np.nan_to_num(gm.project(p)).round(1).tolist() for p in lb if len(p) >= 2],
-             "edges_px": [np.nan_to_num(gm.project(p)).round(1).tolist() for p in eb if len(p) >= 2],
-             "raw": raw_counts[k], "gores": gores_live[k],
-+            # iter9: main edges before trim/hold/kerb (diagnosis), and the ego pose used for world-frame pinning
-+            "edges_raw": {r_: [[round(float(x_), 3), float(z_)] for x_, z_ in zip(xr_, LM.ZS) if np.isfinite(x_)]
-+                          for r_, xr_ in (edges_raw_live[k].items() if k < len(edges_raw_live) else [])},
-+            "ego": {"x": round(float(ego_pose["x"][k]), 3), "z": round(float(ego_pose["z"][k]), 3),
-+                    "psi": round(float(ego_pose["psi"][k]), 5)} if k < len(ego_pose["psi"]) else None,
-         })
-     cap.release()
-     sw.close()
-@@ -1253,7 +1307,7 @@
+@@ -1307,7 +1316,7 @@
      pp = Path(args.polylines_json)
      pp.parent.mkdir(parents=True, exist_ok=True)
      pp.write_text(json.dumps({
--        "clip": tag, "version": "iter8",
-+        "clip": tag, "version": "iter9",
+-        "clip": tag, "version": "iter9",
++        "clip": tag, "version": "iter10",
          "units": {"image": "pixels, x right, y down", "bev": "metres in current ego frame, x right, z forward",
                    "c": "x(z) = c0 + c1*z + c2*z^2 in the current ego frame"},
          "K": {"fx": fx, "fy": fy, "cx": cx, "cy": cy}, "cam_height_m": cam_h, "fps": fps, "ego_speed_mps": speed,
-@@ -1263,7 +1317,7 @@
+@@ -1317,7 +1326,7 @@
      }))
      n_lane_route = sum(1 for o in obs_all if len(o["lane_px"]))
      dp = Path(args.dets_json) if args.dets_json else pp.with_name(f"{tag}_dets_ego.json")
--    dp.write_text(json.dumps({"clip": tag, "version": "iter8", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
-+    dp.write_text(json.dumps({"clip": tag, "version": "iter9", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
+-    dp.write_text(json.dumps({"clip": tag, "version": "iter9", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
++    dp.write_text(json.dumps({"clip": tag, "version": "iter10", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
                                "ground": ground, "frames": det_dump,
                                "ego": {"selected": {k: v for k, v in ego_sel.items() if k not in ("s", "speed")},
                                        "speed_selected_mps": [round(float(v), 3) for v in ego_sel["speed"]],
-@@ -1272,7 +1326,7 @@
+@@ -1326,7 +1335,7 @@
                                        "scene_speed_mps": [round(float(v), 3) for v in scene["speed"]],
                                        "prior_mps": speed}}, default=float))
      rec = {
--        "rc": 0, "tag": tag, "version": "iter8", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
-+        "rc": 0, "tag": tag, "version": "iter9", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
+-        "rc": 0, "tag": tag, "version": "iter9", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
++        "rc": 0, "tag": tag, "version": "iter10", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
          "K": [fx, fy, cx, cy], "cam_height": cam_h, "ego_speed_mps": speed, "ground": ground,
          "n_obj_dets_npz": n_obj_dets, "n_tracks": len(tracks), "n_relink": trk.n_relink,
          "n_track_rows": len(csv_rows), "lane_gated": lt.n_gated,
-diff -ruN -x __pycache__ iter8_spec/src/lines_mt.py iter9_spec/src/lines_mt.py
---- iter8_spec/src/lines_mt.py	2026-11-24 10:51:14.251943041 +0530
-+++ iter9_spec/src/lines_mt.py	2026-11-24 13:24:57.589302692 +0530
-@@ -876,8 +876,12 @@
-         self.div = DivergenceGore()
-         self.n_split_frames = 0
-         self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
-+        self.last_raw = {}
-+        if not hasattr(self, "kerb"):
-+            self.kerb = KerbState()
+diff -ruN -x __pycache__ iter9_spec/src/lines_mt.py iter10_spec/src/lines_mt.py
+--- iter9_spec/src/lines_mt.py	2026-11-24 13:24:57.589302692 +0530
++++ iter10_spec/src/lines_mt.py	2026-11-24 15:39:28.591530691 +0530
+@@ -20,6 +20,7 @@
+                       touches an existing line (< 1 m) at one end becomes its child (fork / merge point)
+   GoreTracker         hit-count + EMA on polygon vertices
+ """
++import json
+ import os
  
--    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0):
-+    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0, cars=None):
-+        self.last_raw = {}
-         comps = components(paint_bev, res)
-         chains, stripes = extract_chains(comps)
-         lanes = clean_lanes([_legacy(r) for r in self.lanes.step(k, [smooth_chain(c) for c in chains])])
-@@ -895,6 +899,8 @@
-             if role.startswith("main"):
-                 # iter7: trim the bad near-ego / lane-crossing part instead of dropping the edge; hold <= 5 frames
-                 sd = -1 if role == "main_L" else 1
-+                if got:  # iter9: keep the untrimmed main edge for the polylines dump (diagnosis of trims on GPU runs)
-+                    self.last_raw[role] = np.asarray(got[0]["x"], float).copy()
+ import numpy as np
+@@ -563,6 +564,38 @@
+ EGO_HALF_M = float(os.environ.get("FBEV_EDGE_EGO_HALF_M", 1.2))       # iter8: an edge never enters the ego corridor
+ 
+ 
++_TRIM_DEBUG_PATH = os.environ.get("FBEV_TRIM_DEBUG", "")
++EDGE_GAP_M = float(os.environ.get("FBEV_EDGE_GAP_M", "5.0"))        # iter10: bridge interior holes <= this before trim
++EDGE_GAP_SLOPE = float(os.environ.get("FBEV_EDGE_GAP_SLOPE", "0.5"))  # iter10: |bridge slope - road slope| limit
++
++
++def bridge_gaps(x, max_gap_m=None, max_slope=None, ref_slope=0.0):
++    """iter10 (munich R: 40 frames lost z = 10 m with a raw edge present): the SAM road boundary has interior holes
++    (parked / stopped cars, shadows) of 1-6.5 m; trim_edge keeps the NEAREST run >= 4 m, so a 1.5 m near piece + a
++    hole made it skip to the far part (f2: 21-44 m, f258: 11.5-15 m). Interior holes <= max_gap_m are filled
++    linearly when the bridge runs with the road (|slope - ref_slope| <= max_slope = 0.5, 27 deg: 1.0 let the forecourt hooks f8-12 / f144-147 back in); the trim rules (lane crossing,
++    ego corridor, heading) then still judge the bridged samples, so flares / crossings stay out. Leading /
++    trailing NaN are never extrapolated; longer holes (f2-7: 6.5 m in front of the parked cars made a diagonal hook; forecourts: munich f158-165 10.5 m,
++    f256-265 11-19 m) stay holes."""
++    max_gap_m = EDGE_GAP_M if max_gap_m is None else max_gap_m
++    max_slope = EDGE_GAP_SLOPE if max_slope is None else max_slope
++    x = np.asarray(x, float).copy()
++    idx = np.flatnonzero(np.isfinite(x))
++    if max_gap_m <= 0 or len(idx) < 2:
++        return x
++    for a, b in zip(idx[:-1], idx[1:]):
++        if b - a < 2:
++            continue
++        dz = ZS[b] - ZS[a]
++        if dz > max_gap_m + 1e-6 or abs((x[b] - x[a]) / dz - ref_slope) > max_slope:
++            continue
++        x[a + 1:b] = np.interp(ZS[a + 1:b], [ZS[a], ZS[b]], [x[a], x[b]])
++    return x
++
++
++TRIM_DEBUG = None  # list -> trim_edge appends its masks (offline diagnosis only)
++
++
+ def trim_edge(x, side, lanes, max_deg=None, z_near=20.0, tol=0.5, min_len_m=4.0, div_deg=None, ego_half=None):
+     """iter7: instead of dropping a whole edge, remove only the bad samples. iter8 rules:
+     (a) lane crossing: an edge that starts outside a tracked lane line and passes > tol to its inner side is
+@@ -577,6 +610,9 @@
+     div_deg = EDGE_DIV_DEG if div_deg is None else div_deg
+     ego_half = EGO_HALF_M if ego_half is None else ego_half
+     x = np.asarray(x, float).copy()
++    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
++    ref = np.radians(float(np.median(la))) if la else 0.0
++    x = bridge_gaps(x, ref_slope=float(np.tan(ref)))  # iter10: munich R f2-12 / 144-173 / 256-267 (occlusion holes)
+     f = np.isfinite(x)
+     if f.sum() < 4:
+         return None
+@@ -598,13 +634,14 @@
+         else:
+             bad |= cross
+     bad |= f & (x * side < ego_half)
+-    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
+-    ref = np.radians(float(np.median(la))) if la else 0.0
+     xs = np.where(f, x, np.interp(ZS, ZS[f], x[f]))
+     dev = np.degrees(np.arctan(np.gradient(xs, ZS)) - ref) * side  # > 0: diverging (moving outward with distance)
+     near = f & (ZS <= z_near)
+     bad |= near & (((dev < 0) & (-dev > max_deg)) | ((dev > 0) & (dev > div_deg)))
+     run = _nearest_run(f & ~bad, int(round(min_len_m / (ZS[1] - ZS[0]))))
++    if TRIM_DEBUG is not None:
++        TRIM_DEBUG.append({"side": side, "x": x.copy(), "bad": bad.copy(), "run": run, "ref": float(np.degrees(ref)),
++                           "dev": dev.copy(), "lanes": [np.asarray(xg_of(r), float).copy() for r in lanes]})
+     if run is None:
+         return None
+     out = np.full(len(ZS), np.nan)
+@@ -878,7 +915,7 @@
+         self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
+         self.last_raw = {}
+         if not hasattr(self, "kerb"):
+-            self.kerb = KerbState()
++            self.kerb = KerbState(fps=fps)
+ 
+     def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0, cars=None):
+         self.last_raw = {}
+@@ -902,6 +939,19 @@
+                 if got:  # iter9: keep the untrimmed main edge for the polylines dump (diagnosis of trims on GPU runs)
+                     self.last_raw[role] = np.asarray(got[0]["x"], float).copy()
                  tr_ = []
++                global TRIM_DEBUG
++                if _TRIM_DEBUG_PATH:
++                    TRIM_DEBUG = []
++                for r in got:
++                    xt = trim_edge(r["x"], sd, lanes)
++                if _TRIM_DEBUG_PATH and TRIM_DEBUG:
++                    with open(_TRIM_DEBUG_PATH, "a") as fh_:
++                        for d_ in TRIM_DEBUG:
++                            fh_.write(json.dumps({"k": int(k), "role": role, "run": d_["run"], "ref": d_["ref"],
++                                                  "x": np.round(d_["x"], 3).tolist(), "bad": d_["bad"].astype(int).tolist(),
++                                                  "dev": np.round(d_["dev"], 1).tolist(),
++                                                  "lanes": [np.round(l_, 3).tolist() for l_ in d_["lanes"]]}).replace("NaN", "null") + "\n")
++                    TRIM_DEBUG = None
                  for r in got:
                      xt = trim_edge(r["x"], sd, lanes)
-@@ -904,6 +910,19 @@
-             for r in got:
-                 side = -1 if role == "main_L" else (1 if role == "main_R" else None)
-                 edges.append(_legacy(r, side=side, kind="edge", extra={"role": role, "split": role.startswith("split")}))
-+        if KERB_CARS:  # iter9: main edge along a parked-car row -> kerb behind the cars (with hysteresis)
-+            mains = {e.get("role"): e for e in edges if e.get("role") in ("main_L", "main_R")}
-+            for role, sd in (("main_L", -1), ("main_R", 1)):
-+                e = mains.get(role)
-+                if e is None:
-+                    continue
-+                o = mains.get("main_R" if role == "main_L" else "main_L")
-+                xk, app = self.kerb.step(role, e["xg"], sd, cars, _ref_slope(o["xg"] if o is not None else None, lanes), ds, lanes=lanes)
-+                if app:
-+                    fk = np.isfinite(xk)
-+                    c2 = np.polyfit(ZS[fk], xk[fk], 2 if np.ptp(ZS[fk]) > 12 else 1)[::-1]
-+                    e2 = dict(e, xg=xk, kerb_occ=True, c=np.concatenate([c2, np.zeros(3 - len(c2))]))
-+                    edges[edges.index(e)] = e2
-         for role, sd in (("main_L", -1), ("main_R", 1)):  # iter7 temporal hold (+ fill of trimmed samples)
-             cur = [e for e in edges if e.get("role") == role]
-             h = self.hold.step(role, cur[0] if cur else None, ds)
-@@ -924,3 +943,227 @@
+                     if xt is not None:
+@@ -1020,6 +1070,197 @@
+     return out
  
-     def events(self):
-         return self.lanes.events + [e for t in self.edges.values() for e in t.events]
+ 
++
++# ----------------------------------------------------------------------------------------------- iter10
++PAIR_W_S = float(os.environ.get("FBEV_PAIR_W_S", "1.5"))          # ego lane-pair width window (+- s); 0 = off
++PAIR_W_MAXDEV = float(os.environ.get("FBEV_PAIR_W_MAXDEV", "0.5"))  # leave samples whose width moves more alone
++PAIR_W_SPLIT = os.environ.get("FBEV_PAIR_W_SPLIT", "resid")         # resid | half: who absorbs the width change
++PAIR_W_MODE = os.environ.get("FBEV_PAIR_W_MODE", "tri")          # tri | auto | mean | median; the constant-width priors cut lane_split wjit 0.136 -> 0.06 but cost the final lane change (0.013 -> 0.018)
++PAIR_W_TREND_M = float(os.environ.get("FBEV_PAIR_W_TREND_M", "0.3"))  # auto: run width trend above this -> tri
++LANE_BACKFILL_S = float(os.environ.get("FBEV_LANE_BACKFILL_S", "0.3"))  # backfill confirmed lanes into the clip start
 +
 +
-+# ----------------------------------------------------------------------------------------------- iter9
-+LINE_SMOOTH_S = float(os.environ.get("FBEV_LINE_SMOOTH_S", "0.3"))
-+LINE_SMOOTH_SYM = os.environ.get("FBEV_LINE_SMOOTH_SYM", "1") == "1"
-+LINE_SMOOTH_POSE = os.environ.get("FBEV_LINE_SMOOTH_POSE", "0") == "1"  # ego-pose transform (VO yaw) vs travel shift
++def _ego_pair(fr, z_ref=10.0):
++    """nearest left (x < 0) / right (x >= 0) tracked lane at z_ref (the metrics' definition), as list indices."""
++    iz = int(np.argmin(np.abs(ZS - z_ref)))
++    L = R = None
++    for i, r in enumerate(fr):
++        if r.get("fallback") or r.get("xg") is None:
++            continue
++        v = np.asarray(r["xg"], float)[iz]
++        if not np.isfinite(v):
++            continue
++        if v < 0 and (L is None or v > fr[L]["xg"][iz]):
++            L = i
++        if v >= 0 and (R is None or v < fr[R]["xg"][iz]):
++            R = i
++    return L, R
 +
 +
-+def _to_frame(x, ego, j, k):
-+    """line samples x(ZS) in ego frame j -> (x', z') in ego frame k via the ego pose (heading psi, path x/z)."""
-+    f = np.isfinite(x)
-+    cj, sj = np.cos(ego["psi"][j]), np.sin(ego["psi"][j])
-+    X = ego["x"][j] + cj * x[f] + sj * ZS[f]; Zw = ego["z"][j] - sj * x[f] + cj * ZS[f]
-+    ck, sk = np.cos(ego["psi"][k]), np.sin(ego["psi"][k])
-+    dx, dz = X - ego["x"][k], Zw - ego["z"][k]
-+    return ck * dx - sk * dz, sk * dx + ck * dz
++def _tri_smooth(t, v, h):
++    """centred triangular smoothing of a series with gaps (None/nan), symmetric window clipped at the ends."""
++    v = np.asarray(v, float); out = v.copy(); n = len(v)
++    for k in range(n):
++        if not np.isfinite(v[k]):
++            continue
++        hk = min(h, k, n - 1 - k)
++        acc = wsum = 0.0
++        for j in range(k - hk, k + hk + 1):
++            if np.isfinite(v[j]):
++                w = 1.0 - abs(j - k) / (hk + 1.0); acc += w * v[j]; wsum += w
++        out[k] = acc / wsum
++    return out
 +
 +
-+def centre_smooth_lines(frames, s, fps, half_s=None, kind="lanes", ego=None):
-+    """iter9: zero-lag (centred) temporal smoothing of every tracked line, done offline (the whole clip is known
-+    before rendering). frames[k] = list of line records with 'xg' (ego frame k) and an 'id' (+ 'role' for edges).
-+    Neighbour frames j within +-half_s seconds are moved into frame k, with the ego pose (VO heading + selected
-+    travel) when given, else by the travel s only (a static world line at ego z in frame k sits at z - (s[j]-s[k])
-+    in frame j), and averaged with triangular weights. Only samples present in frame k change: presence, z-extent,
-+    ids, roles and flags are unchanged. Fallback (legacy) lanes are left alone."""
-+    half_s = LINE_SMOOTH_S if half_s is None else half_s
++def pair_width_smooth(frames, s, fps, half_s=None, max_dev=None, split=None, z_ref=10.0, mode=None):
++    """iter10 (YOLO gap, lane width jitter: exit 0.023 vs 0.007, late 0.020 vs 0.009, final 0.013 vs 0.008): the
++    ego lane pair's spacing wobbles with the dashed-line phase (exit: right line 1.16 <-> 1.98 m, period ~12 frames)
++    which +-0.3 s line smoothing cannot remove. Offline joint smoothing of the PAIR, per run of frames with the same
++    (left id, right id) pair: the width profile w(z) = x_R - x_L is averaged over +-half_s s (triangular, symmetric,
++    clipped to the run; neighbour frames moved by the ego travel as in centre_smooth_lines) - lane width is ~constant
++    for one pair - and the change is given to the line that wobbles ('resid': one weight per run, from each line's
++    RMS offset from its own +-half_s trend at z_ref; 'half': 50/50). Samples whose width would move > max_dev are
++    left alone (a real split / merge). Presence, ids, z-extent unchanged."""
++    half_s = PAIR_W_S if half_s is None else half_s
++    max_dev = PAIR_W_MAXDEV if max_dev is None else max_dev
++    split = PAIR_W_SPLIT if split is None else split
++    mode = PAIR_W_MODE if mode is None else mode
 +    h = int(round(half_s * fps))
-+    if h < 1:
++    if h < 1 or not frames:
 +        return frames
-+    def key(r):
-+        if r.get("fallback") or r.get("xg") is None or r.get("id") is None:
-+            return None
-+        return (r.get("role"), int(r["id"])) if kind == "edges" else int(r["id"])
-+    idx = [{key(r): r for r in fr if key(r) is not None} for fr in frames]
-+    use_pose = ego is not None and all(len(ego[a]) >= len(frames) for a in ("x", "z", "psi"))
-+    out = []
-+    for k, fr in enumerate(frames):
-+        new = []
-+        for r in fr:
-+            kk = key(r)
-+            if kk is None:
-+                new.append(r); continue
-+            x0 = np.asarray(r["xg"], float); f0 = np.isfinite(x0)
-+            if f0.sum() < 2:
-+                new.append(r); continue
-+            acc = np.where(f0, x0, 0.0); wsum = f0.astype(float)
-+            hk = h
-+            if LINE_SMOOTH_SYM:  # symmetric window only (a one-sided window at a track's birth / end bends a trend)
-+                hk = 0
-+                while hk < h and 0 <= k - hk - 1 and k + hk + 1 < len(frames) and kk in idx[k - hk - 1] and kk in idx[k + hk + 1]:
-+                    hk += 1
-+            for j in range(max(0, k - hk), min(len(frames), k + hk + 1)):
-+                rj = idx[j].get(kk) if j != k else None
-+                if rj is None:
++    iz = int(np.argmin(np.abs(ZS - z_ref)))
++    n = len(frames)
++    pairs = [_ego_pair(fr, z_ref) for fr in frames]
++    key = [None if (iL is None or iR is None) else (frames[k][iL].get("id"), frames[k][iR].get("id"))
++           for k, (iL, iR) in enumerate(pairs)]
++    out = [list(fr) for fr in frames]
++    k = 0
++    while k < n:
++        j = k
++        while j + 1 < n and key[j + 1] == key[k]:
++            j += 1
++        if key[k] is not None and j > k:
++            idx = list(range(k, j + 1))
++            XL = [np.asarray(frames[t][pairs[t][0]]["xg"], float) for t in idx]
++            XR = [np.asarray(frames[t][pairs[t][1]]["xg"], float) for t in idx]
++            W = [r - l for l, r in zip(XL, XR)]
++            if split == "resid":
++                vL = np.array([x[iz] for x in XL]); vR = np.array([x[iz] for x in XR])
++                eL = np.sqrt(np.nanmean((vL - _tri_smooth(None, vL, h)) ** 2)) if len(idx) > 2 else 0.0
++                eR = np.sqrt(np.nanmean((vR - _tri_smooth(None, vR, h)) ** 2)) if len(idx) > 2 else 0.0
++                aR = float(eR / (eL + eR)) if eL + eR > 1e-6 else 0.5
++            else:
++                aR = 0.5
++            m = len(idx)
++            mode_r = mode
++            if mode == "auto":  # constant-width prior only for a run whose width does not trend (a lane change / split does)
++                vw = np.array([w_[iz] for w_ in W]); okw = np.isfinite(vw)
++                tr_m = abs(np.polyfit(np.flatnonzero(okw), vw[okw], 1)[0]) * (m - 1) if okw.sum() >= 3 else np.inf
++                mode_r = "mean" if (tr_m <= PAIR_W_TREND_M and m >= fps) else "tri"  # and >= 1 s of the pair
++            for a_, t in enumerate(idx):
++                wk = W[a_]; f0 = np.isfinite(wk)
++                if f0.sum() < 2:
 +                    continue
-+                xj = np.asarray(rj["xg"], float); fj = np.isfinite(xj)
-+                if fj.sum() < 2:
-+                    continue
-+                if use_pose:
-+                    xx, zz = _to_frame(xj, ego, j, k)
-+                else:
-+                    xx, zz = xj[fj], ZS[fj] + (float(s[j]) - float(s[k]))  # frame-j z -> frame-k z
-+                o = np.argsort(zz); xx, zz = xx[o], zz[o]
-+                if len(zz) < 2 or np.any(np.diff(zz) <= 0):
-+                    keep = np.concatenate([[True], np.diff(zz) > 1e-6]); xx, zz = xx[keep], zz[keep]
-+                    if len(zz) < 2:
++                if mode_r in ("median", "mean"):  # lane-width prior: per-z median of the pair width over the run window
++                    lo, hi = max(0, a_ - h), min(m - 1, a_ + h)
++                    if hi - lo < 2:
 +                        continue
-+                ok = f0 & (ZS >= zz[0]) & (ZS <= zz[-1])
-+                if not ok.any():
++                    stack = np.full((hi - lo + 1, len(ZS)), np.nan)
++                    for r_, b_ in enumerate(range(lo, hi + 1)):
++                        fj = np.isfinite(W[b_])
++                        if fj.sum() < 2:
++                            continue
++                        zz = ZS[fj] + (float(s[idx[b_]]) - float(s[t])); xx = W[b_][fj]
++                        ok = f0 & (ZS >= zz[0]) & (ZS <= zz[-1])
++                        stack[r_, ok] = np.interp(ZS[ok], zz, xx)
++                    cnt = np.isfinite(stack).sum(0)
++                    med = np.full(len(ZS), np.nan)
++                    okm = f0 & (cnt >= 3)
++                    if okm.any():
++                        med[okm] = (np.nanmedian if mode_r == "median" else np.nanmean)(stack[:, okm], axis=0)
++                    e = np.where(okm, med - wk, 0.0)
++                    g = np.clip(1.5 - np.abs(e) / max_dev, 0.0, 1.0)  # full up to max_dev / 2, fades out by 1.5 max_dev
++                    e = e * g
++                    iL, iR = pairs[t]
++                    out[t][iL] = dict(frames[t][iL], xg=np.where(np.isfinite(XL[a_]), XL[a_] - (1.0 - aR) * e, np.nan))
++                    out[t][iR] = dict(frames[t][iR], xg=np.where(np.isfinite(XR[a_]), XR[a_] + aR * e, np.nan))
 +                    continue
-+                w = 1.0 - abs(j - k) / (hk + 1.0)
-+                acc[ok] += w * np.interp(ZS[ok], zz, xx); wsum[ok] += w
-+            new.append(dict(r, xg=np.where(f0, acc / np.maximum(wsum, 1e-9), np.nan)))
-+        out.append(new)
++                hk = min(h, a_, m - 1 - a_)
++                if hk < 1:
++                    continue
++                acc = np.where(f0, wk, 0.0); wsum = f0.astype(float)
++                for b_ in range(a_ - hk, a_ + hk + 1):
++                    if b_ == a_:
++                        continue
++                    fj = np.isfinite(W[b_])
++                    if fj.sum() < 2:
++                        continue
++                    zz = ZS[fj] + (float(s[idx[b_]]) - float(s[t])); xx = W[b_][fj]
++                    ok = f0 & (ZS >= zz[0]) & (ZS <= zz[-1])
++                    if not ok.any():
++                        continue
++                    w = 1.0 - abs(b_ - a_) / (hk + 1.0)
++                    acc[ok] += w * np.interp(ZS[ok], zz, xx); wsum[ok] += w
++                e = np.where(f0, acc / np.maximum(wsum, 1e-9) - wk, 0.0)
++                e = e * np.clip(1.5 - np.abs(e) / max_dev, 0.0, 1.0)  # full up to max_dev / 2, fades out by 1.5 max_dev
++                iL, iR = pairs[t]
++                out[t][iL] = dict(frames[t][iL], xg=np.where(np.isfinite(XL[a_]), XL[a_] - (1.0 - aR) * e, np.nan))
++                out[t][iR] = dict(frames[t][iR], xg=np.where(np.isfinite(XR[a_]), XR[a_] + aR * e, np.nan))
++        k = j + 1
 +    return out
 +
 +
-+KERB_CARS = os.environ.get("FBEV_KERB_CARS", "1") == "1"
-+KERB_MAX_PUSH_M = float(os.environ.get("FBEV_KERB_MAX_PUSH_M", "2.5"))
-+KERB_MARGIN_M = float(os.environ.get("FBEV_KERB_MARGIN_M", "0.0"))
-+KERB_CAR_LEN_M = 4.5
-+
-+
-+def car_footprints(boxes, lift, inner_frac=0.15):
-+    """iter9: image car boxes -> BEV contact rows. lift(us, vs) -> (N, 2) ground x, z. For each box: the ground row of
-+    its bottom edge zb, the flank x at that row (xl, xr) and the central part (xa, xb: 15 % in from each side) that
-+    marks 'the edge runs along this car's bottom'."""
-+    out = []
-+    for b in boxes or []:
-+        x1, _, x2, y2 = [float(v) for v in b[:4]]
-+        wb = x2 - x1
-+        p = lift([x1, x2, x1 + inner_frac * wb, x2 - inner_frac * wb], [y2] * 4)
-+        if not np.isfinite(p).all() or p[0, 1] <= 1.0:
-+            continue
-+        out.append({"zb": float(np.median(p[:, 1])), "xl": float(p[0, 0]), "xr": float(p[1, 0]),
-+                    "xa": float(p[2, 0]), "xb": float(p[3, 0])})
-+    return out
-+
-+
-+def _ref_slope(other_x, lanes):
-+    """road heading as dx/dz: the opposite main edge near the ego (z <= 25 m), else the median lane heading, else 0."""
-+    if other_x is not None:
-+        o = np.asarray(other_x, float); f = np.isfinite(o) & (ZS <= 25.0)
-+        if f.sum() >= 8:
-+            return float(np.polyfit(ZS[f], o[f], 1)[0])
-+    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
-+    return float(np.tan(np.radians(np.median(la)))) if la else 0.0
-+
-+
-+def kerb_behind_cars(x, side, cars, ref_slope, max_push=None, margin=None, car_len=KERB_CAR_LEN_M, line_only=False,
-+                     lanes=None):
-+    """iter9 (lane_split f29, munich R): next to a row of parked cars the SAM drivable-area boundary is the cars'
-+    bottoms / shadows, so the main edge runs diagonally in front of them instead of along the kerb behind them.
-+    If the edge runs along the bottom of >= 1 car on its side (>= 2 samples within [zb - 0.5, zb + 1.5] whose
-+    bearing falls inside the central 70 % of that car's bottom), the kerb is taken as the straight line with the
-+    road heading (ref_slope) that clears the outer flank of every car on that side (+ margin), and the edge becomes
-+    the outer envelope max(edge, line) up to the last such car + car_len + 3 m (the push ramps out over 3 m after).
-+    Cars whose outer flank is > max_push outside the edge are ignored (beyond the kerb: driveway, other road).
-+    Only existing samples move, and only outward, so presence and z-extent are unchanged and the edge cannot cross
-+    a lane or enter the ego corridor through this. Returns (x, applied)."""
-+    max_push = KERB_MAX_PUSH_M if max_push is None else max_push
-+    margin = KERB_MARGIN_M if margin is None else margin
-+    if x is None or not cars:
-+        return x, False
-+    x = np.asarray(x, float); f = np.isfinite(x)
-+    if f.sum() < 4:
-+        return x, False
-+    q = side * x  # outward-positive
-+    zmin, zmax = ZS[f].min(), ZS[f].max()
-+    bounded, cons = False, []
-+    lx = [np.asarray(xg_of(r), float) for r in (lanes or []) if not r.get("fallback") and xg_of(r) is not None]
-+    for c in cars:
-+        outer = c["xr"] if side > 0 else c["xl"]
-+        if side * outer < 1.0 or not (zmin - 0.5 <= c["zb"] <= zmax + 0.5):
-+            continue
-+        # traffic, not parking (munich f692 / f760 queues): a long (>= 8 m) painted lane line runs alongside the car,
-+        # >= 1 m inside its outer flank (a parked row has no lane line under it; lane_split's bay line is short)
-+        wz = (ZS >= c["zb"] - 1.0) & (ZS <= c["zb"] + car_len)
-+        traffic = False
-+        for l in lx:
-+            fl = np.isfinite(l)
-+            if fl.sum() < 2 or np.ptp(ZS[fl]) < 8.0 or not (fl & wz).any():
++def lane_backfill(frames, s, fps, max_s=None, z_ref=10.0, min_hits=4, dup_m=0.8):
++    """iter10 (YOLO gap, lane presence: every KITTI clip misses lanes on f0-1 because a lane needs >= 4 hits): offline
++    (the clip is processed before rendering), a lane confirmed in the first max_s seconds is copied back into the
++    earlier frames of the clip start, moved by the ego travel (a world line at frame-k0 z sits at z + (s[k0] - s[j])
++    in frame j) and, when that leaves z_ref uncovered, extended to its frame-k0 near end along its near slope (<= the
++    travel, a few metres). Not done when a lane already lies within dup_m at z_ref on that frame. Marked
++    'backfill': True. Only the clip start: a mid-clip birth is a real new line."""
++    max_s = LANE_BACKFILL_S if max_s is None else max_s
++    kmax = int(round(max_s * fps))
++    if kmax < 1 or not frames:
++        return frames
++    out = [list(fr) for fr in frames]
++    iz = int(np.argmin(np.abs(ZS - z_ref)))
++    first = {}
++    for k, fr in enumerate(frames[: kmax + 1]):
++        for r in fr:
++            if r.get("fallback") or r.get("xg") is None or r.get("id") is None:
 +                continue
-+            v = float(np.median(side * l[fl & wz]))
-+            if 0.5 < v < side * outer - 1.0:
-+                traffic = True; break
-+        if traffic:
++            if int(r["id"]) not in first:
++                first[int(r["id"])] = k
++    for lid, k0 in first.items():
++        if k0 == 0:
 +            continue
-+        m = f & (ZS >= c["zb"] - 0.5) & (ZS <= c["zb"] + 1.5)
-+        if m.any():
-+            ra, rb = sorted((c["xa"] / c["zb"], c["xb"] / c["zb"]))
-+            r = x[m] / ZS[m]
-+            if int(((r >= ra) & (r <= rb)).sum()) >= 2:
-+                bounded = True
-+        qz = float(np.interp(c["zb"], ZS[f], q[f]))
-+        qo = side * outer + margin
-+        if qo > qz and qo - qz <= max_push:
-+            cons.append((qo, c["zb"]))
-+    if not bounded or not cons:
-+        return x, False
-+    B = side * ref_slope
-+    A = max(qo - B * zb for qo, zb in cons)
-+    z_end = max(zb for _, zb in cons) + car_len + 3.0
-+    if line_only:
-+        return (A, B, z_end), True
-+    return kerb_apply(x, side, A, B, z_end, max_push)
++        r0 = next(r for r in frames[k0] if r.get("id") is not None and int(r["id"]) == lid and r.get("xg") is not None)
++        x0 = np.asarray(r0["xg"], float); f0 = np.isfinite(x0)
++        if f0.sum() < 4 or r0.get("held"):
++            continue
++        # the lane must be confirmed (still tracked a few frames later), not a one-off
++        if sum(1 for fr in frames[k0:k0 + min_hits] for r in fr if r.get("id") is not None and int(r["id"]) == lid) < min(min_hits, len(frames) - k0):
++            continue
++        zf = ZS[f0]; xf = x0[f0]
++        nz = zf <= zf[0] + 4.0
++        sl = np.polyfit(zf[nz], xf[nz], 1)[0] if nz.sum() >= 3 else 0.0
++        for j in range(0, k0):
++            dz = float(s[k0]) - float(s[j])  # >= 0
++            zz = zf + dz
++            xj = np.full(len(ZS), np.nan)
++            m = (ZS >= zz[0]) & (ZS <= zz[-1]); xj[m] = np.interp(ZS[m], zz, xf)
++            ext = (ZS >= zf[0] - 1e-6) & (ZS < zz[0])
++            xj[ext] = xf[0] + sl * (ZS[ext] - zz[0])
++            v = xj[iz]
++            if not np.isfinite(v):
++                continue
++            if any(np.isfinite(np.asarray(r.get("xg") if r.get("xg") is not None else np.full(len(ZS), np.nan), float)[iz])
++                   and abs(np.asarray(r["xg"], float)[iz] - v) < dup_m for r in out[j] if r.get("xg") is not None):
++                continue
++            fz = ZS[np.isfinite(xj)]
++            out[j].append(dict(r0, xg=xj, zmin=float(fz.min()), zmax=float(fz.max()), held=False, backfill=True,
++                               hits=int(r0.get("hits", 0))))
++    return out
 +
+ KERB_CARS = os.environ.get("FBEV_KERB_CARS", "1") == "1"
+ KERB_MAX_PUSH_M = float(os.environ.get("FBEV_KERB_MAX_PUSH_M", "2.5"))
+ KERB_MARGIN_M = float(os.environ.get("FBEV_KERB_MARGIN_M", "0.0"))
+@@ -1127,6 +1368,7 @@
+ KERB_ENTER = int(os.environ.get("FBEV_KERB_ENTER", "3"))  # consecutive bounded frames before the kerb line applies
+ KERB_HOLD = int(os.environ.get("FBEV_KERB_HOLD", "5"))    # frames the kerb line is carried after the last bounded one
+ KERB_MED_N = 3                                            # kerb line = median of the last N bounded lines
++KERB_RAMP_S = float(os.environ.get("FBEV_KERB_RAMP_S", "0.3"))  # iter10: blend in / out time (0 = iter9 switch)
+ KERB_HOLD_HITS = 5                                        # a hold only after >= this many bounded frames
+ 
+ 
+@@ -1140,10 +1382,50 @@
+ 
+     ZR = 10.0
+ 
+-    def __init__(self):
++    def __init__(self, fps=10.0):
+         self.s = {}
++        # iter10: blend the kerb push in / out over KERB_RAMP_S (the on/off switch made edge wjit regress:
++        # lane_split 0.107 -> 0.130, a2d2a 0.062 -> 0.078)
++        self.ramp_n = max(1, int(round(KERB_RAMP_S * fps)))
++        self.alpha = {}
++        self.last_line = {}
+ 
+     def step(self, role, x, side, cars, ref_slope, ds=0.0, lanes=None):
++        xo, app = self._step(role, x, side, cars, ref_slope, ds, lanes)
++        a0 = self.alpha.get(role, 0.0)
++        if self.ramp_n <= 1:
++            return xo, app
++        if app:
++            a1 = min(1.0, a0 + 1.0 / self.ramp_n)
++            self.last_line[role] = self._cur_line(role)
++        else:
++            a1 = max(0.0, a0 - 1.0 / self.ramp_n)
++        self.alpha[role] = a1
++        if x is None or a1 <= 0.0:
++            self.last_line.pop(role, None) if a1 <= 0.0 else None
++            return xo, False
++        if app:
++            xa = np.asarray(x, float)
++            return np.where(np.isfinite(xa), xa + a1 * (np.asarray(xo, float) - xa), np.nan), True
++        ln = self.last_line.get(role)  # ramp-out: the last kerb line, carried with the ego travel
++        if ln is None:
++            return xo, False
++        q, B, ze = ln
++        q = q + B * ds; ze = ze - ds
++        self.last_line[role] = (q, B, ze)
++        xk, ok = kerb_apply(x, side, q - B * self.ZR, B, ze)
++        if not ok:
++            return xo, False
++        xa = np.asarray(x, float)
++        return np.where(np.isfinite(xa), xa + a1 * (np.asarray(xk, float) - xa), np.nan), True
 +
-+def kerb_apply(x, side, A, B, z_end, max_push=None):
-+    """push the edge outward onto the kerb line q = A + B z (outward-positive), capped at max_push, ramped out over
-+    3 m after z_end. Only finite samples move, only outward. Returns (x, applied)."""
-+    max_push = KERB_MAX_PUSH_M if max_push is None else max_push
-+    x = np.asarray(x, float); f = np.isfinite(x)
-+    if f.sum() < 2:
-+        return x, False
-+    q = side * x
-+    push = np.clip(A + B * ZS - q, 0.0, max_push) * np.clip(1.0 - (ZS - z_end) / 3.0, 0.0, 1.0)
-+    qn = np.where(f, q + push, np.nan)
-+    return side * qn, bool((push[f] > 0.05).any())
-+
-+
-+KERB_ENTER = int(os.environ.get("FBEV_KERB_ENTER", "3"))  # consecutive bounded frames before the kerb line applies
-+KERB_HOLD = int(os.environ.get("FBEV_KERB_HOLD", "5"))    # frames the kerb line is carried after the last bounded one
-+KERB_MED_N = 3                                            # kerb line = median of the last N bounded lines
-+KERB_HOLD_HITS = 5                                        # a hold only after >= this many bounded frames
-+
-+
-+class KerbState:
-+    """iter9: temporal hysteresis for kerb_behind_cars (the per-frame rule toggled with car-box flicker and made the
-+    edge jump by metres on a2d2a / munich): enter after KERB_ENTER consecutive bounded frames (short spurious bursts on
-+    munich traffic queues stay off); the line used is the
-+    median (offset at z = 10 m, slope, end) of the last KERB_MED_N bounded lines, each carried with the ego travel ds;
-+    after the last bounded frame the line is carried for KERB_HOLD frames (only if >= KERB_HOLD_HITS bounded frames),
-+    then dropped."""
-+
-+    ZR = 10.0
-+
-+    def __init__(self):
-+        self.s = {}
-+
-+    def step(self, role, x, side, cars, ref_slope, ds=0.0, lanes=None):
++    def _cur_line(self, role):
 +        st = self.s.get(role)
-+        if st is not None:  # ego moved forward ds: a world line at frame-k z sits at z - ds now
-+            st["L"] = [(q + B * ds, B, ze - ds) for q, B, ze in st["L"]]
-+        ln, ok = (kerb_behind_cars(x, side, cars, ref_slope, line_only=True, lanes=lanes) if x is not None
-+                  else (None, False))
-+        if ok:
-+            A, B, z_end = ln
-+            if st is None:
-+                st = {"L": [], "hits": 0, "age": 0}
-+            st["L"] = (st["L"] + [(A + B * self.ZR, B, z_end)])[-KERB_MED_N:]
-+            st["hits"] += 1; st["age"] = 0
-+        elif st is not None:
-+            st["age"] += 1
-+            if st["age"] > KERB_HOLD or st["hits"] < KERB_HOLD_HITS:
-+                st = None
-+        if st is None:
-+            self.s.pop(role, None)
-+            return x, False
-+        self.s[role] = st
-+        if st["hits"] < KERB_ENTER or x is None:
-+            return x, False
-+        q, B, ze = (float(np.median([l[i] for l in st["L"]])) for i in range(3))
-+        return kerb_apply(x, side, q - B * self.ZR, B, ze)
-diff -ruN -x __pycache__ iter8_spec/src/run_iter8.py iter9_spec/src/run_iter8.py
---- iter8_spec/src/run_iter8.py	2026-11-24 10:42:26.609629230 +0530
-+++ iter9_spec/src/run_iter8.py	1970-01-01 05:30:00.000000000 +0530
-@@ -1,394 +0,0 @@
--# Foundation BEV iter3 (draft spec, 23 Nov 2026): iter2 kernel + bev_gate.py (detection gates, track filters,
--# static dots) + ego_motion.py (visual ego speed/yaw, curved ego path) + per-frame dets/depth/ego dump
--# + ego-speed source comparison + optional YOLOPv2 baseline (measurement only).
--# Previous header (iter2, based on GPU Bot's iter1 kernel):
--# Changes: bash -o pipefail everywhere; WildDet3D submodules (lingbot_depth + sam3 code) init --recursive and
--# pin-checked; import pre-flight + 3-frame WD3D pre-flight; stage 1 must print STAGE1 OK with >0 object boxes
--# or the run stops (no silent fallback); stage 2 = iter2 foundation_bev.py (+ bev_smooth.py) with --require-dets;
--# outputs *_foundation_bev_iter2.mp4 (never overwrites iter1 names); smoothness_metrics.py report at the end.
--# Free Kaggle T4 only, $0. No TwinLiteNet, no YOLO, no Grounding DINO, no SAM 3.
--# Stage 1: WildDet3D text prompts car/person/bicycle + lane/edge boxes.
--# Stage 2: SAM 2.1 (box prompts, else lower-half fallback) + DAV2-S lift + BEV render.
--# Outputs: *_foundation_bev.mp4, stills/, tracks/, polylines/, run_meta.json, README.md.
--import glob, hashlib, json, os, shutil, subprocess, sys, time
--from pathlib import Path
--
--T0 = time.time()
--OUT = os.environ.get("FBEV_OUT", "/kaggle/working")
--TMP = os.environ.get("FBEV_TMP", "/kaggle/temp/w")
--os.makedirs(OUT, exist_ok=True)
--os.makedirs(TMP, exist_ok=True)
--os.chdir(OUT)
--meta = {"rc": 1, "spend_usd": 0, "videos": {}, "stage": "start"}
--PYBIN = sys.executable
--
--WD3D_SHA = "1b8aa52b6ff3f00d0ebfa07175efc0c0c440964a"
--LINGBOT = "ff29de5bf433d1b1519cd851da00bc652668964a"
--SAM3_SUB = "159490bb13108749dd5ceff68f42cd1792e60641"  # pin used by the working drive-videos-22nov WD3D kernel
--HF_REV = "161edb26239f58d8973045517d9c8b179c515f73"
--CKPT = "wilddet3d_alldata_all_prompt_v1.0.pt"
--CKPT_SHA = "f8b6a9e548f733ba62625a0d2adc4b0f4fdb6007ee11d9927f9c1027010fee57"
--SAM2_PIP = "2b90b9f5ceec907a1c18123530e92e794ad901a4"
--DAV2_SHA = "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf"
--SAM_CKPT = "sam2.1_hiera_small.pt"
--DAV2_CKPT = "depth_anything_v2_vits.pth"
--PROMPTS = ["car", "person", "bicycle", "lane line", "lane marking", "road edge", "road curb"]
--TAGS = [
--    "kitti_highway_sample", "kitti_highway_exit_approach", "kitti_highway_late",
--    "kitti_highway_final", "kitti_city_cyclist_candidate", "kitti_lane_split_candidate",
--    "munich", "a2d2a", "a2d2b",
--]
--BUDGET_S1 = float(os.environ.get("FBEV_BUDGET_S1", str(2.6 * 3600)))
--WALL_CAP = float(os.environ.get("FBEV_WALL_CAP", str(3.8 * 3600)))
--MAXF = int(os.environ.get("FBEV_MAXF", "0"))
--SMOKE = os.environ.get("FBEV_SMOKE") == "1"
--# iter8: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
--# <tag>_dets_ego.json (dets_dump); WildDet3D install/pre-flight/stage 1 are skipped. FBEV_TAGS = comma list of clips.
--REUSE = os.environ.get("FBEV_REUSE_DETS", "")
--if os.environ.get("FBEV_TAGS"):
--    TAGS = [t for t in TAGS if t in os.environ["FBEV_TAGS"].split(",")]
--
--
--def sh(c, **k):
--    # iter2: pipefail, so `cmd | tee log` returns cmd's exit code (iter1 recorded tee's 0)
--    print("+", c, flush=True)
--    return subprocess.run(["bash", "-o", "pipefail", "-c", c], **k).returncode
--
--
--def sha256(p):
--    h = hashlib.sha256()
--    with open(p, "rb") as f:
--        for chunk in iter(lambda: f.read(1 << 20), b""):
--            h.update(chunk)
--    return h.hexdigest()
--
--
--def save(**kw):
--    meta.update(kw)
--    meta["elapsed_s"] = round(time.time() - T0, 1)
--    json.dump(meta, open(f"{OUT}/run_meta.json", "w"), indent=1)
--
--
--def find_ds():
--    hits = glob.glob("/kaggle/input/**/cams.json", recursive=True)
--    if hits:
--        return os.path.dirname(hits[0])
--    # local smoke
--    for c in (os.environ.get("FBEV_DS", ""), "/workspace/gpubot/foundation-bev-23nov/ds"):
--        if c and os.path.exists(os.path.join(c, "cams.json")):
--            return c
--    return ""
--
--
--DS = find_ds()
--if not DS:
--    save(rc=20, stage="no_dataset")
--    sys.exit(0)
--meta["dataset"] = DS
--
--# copy scripts (Kaggle may have extracted src/)
--SRC = os.path.join(DS, "src")
--for fn in ("wd3d_infer.py", "foundation_bev.py", "bev_smooth.py", "bev_gate.py", "ego_motion.py", "lines_mt.py", "bev_ipm.py", "smoothness_metrics.py", "analyze_polylines.py"):
--    src = os.path.join(SRC, fn)
--    if not os.path.exists(src):
--        src = os.path.join(DS, fn)
--    if not os.path.exists(src):
--        save(rc=20, stage=f"missing_{fn}")
--        sys.exit(0)
--    shutil.copy2(src, os.path.join(OUT, fn))
--    meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
--
--CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
--cams = json.load(open(CAMS_JSON))
--meta["cams_json"] = os.path.basename(CAMS_JSON)
--motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
--meta["assumptions"] = {t: {"cam": cams[t].get("note", ""), "motion": motion[t].get("note", ""),
--                           "speed_mps": motion[t]["speed_mps"], "K": [cams[t]["fx"], cams[t]["fy"], cams[t]["cx"], cams[t]["cy"]],
--                           "cam_height": cams[t]["height"]} for t in TAGS if t in cams}
--
--gpu = subprocess.run("nvidia-smi --query-gpu=name --format=csv,noheader", shell=True,
--                     capture_output=True, text=True).stdout.strip()
--meta["gpu"] = gpu or ("cpu-smoke" if SMOKE else "unknown")
--save(stage="dataset_ok")
--
--WROOT = f"{TMP}/wilddet3d"
--WEIGHTS = f"{TMP}/weights"
--os.makedirs(WEIGHTS, exist_ok=True)
--ck = ""
--stage1_s = 0
--if not SMOKE and not REUSE:
--    # --- install WildDet3D (same recipe as drive-videos-22nov-wilddet3d, rc=0) ---
--    r = sh(
--        f'{PYBIN} -m pip install -q --upgrade "setuptools<80" && '
--        f'{PYBIN} -m pip install -q --no-deps einops timm "ftfy==6.1.1" iopath portalocker regex huggingface_hub pyquaternion scipy ml_collections && '
--        f'{PYBIN} -m pip install -q --no-deps "utils3d @ git+https://github.com/EasternJournalist/utils3d.git" && '
--        f'({PYBIN} -c "import vis4d" 2>/dev/null || {PYBIN} -m pip install -q vis4d==1.0.0) && '
--        f'({PYBIN} -c "import vis4d_cuda_ops" 2>/dev/null || {PYBIN} -m pip install -q "git+https://github.com/SysCV/vis4d_cuda_ops.git" --no-build-isolation --no-cache-dir) 2>&1 | tail -8 | tee log_install1.txt'
--    )
--    if r:
--        save(rc=21, stage="install_stage1")
--        sys.exit(0)
--    r = sh(
--        f"rm -rf {WROOT} && git clone -q https://github.com/allenai/WildDet3D.git {WROOT} && "
--        f"git -C {WROOT} checkout -q {WD3D_SHA} && "
--        f"git -C {WROOT} submodule update --init --recursive --quiet && "
--        f"git -C {WROOT} rev-parse HEAD | tee commits.txt && "
--        f"git -C {WROOT} submodule status --recursive | tee -a commits.txt"
--    )
--    if r:
--        save(rc=21, stage="clone_wd3d")
--        sys.exit(0)
--    st = open("commits.txt").read()
--    if LINGBOT not in st or SAM3_SUB not in st:
--        save(rc=21, stage="submodule_pin_mismatch", submodules=st[-600:])
--        sys.exit(0)
--    # sam3 is initialised as CODE only: WildDet3D's model.py imports it. No SAM 3 weights are downloaded,
--    # and SAM 3 is not run as a segmenter (WD3D's own checkpoint carries its weights).
--    PRE_PATH = f"{WROOT}/third_party/sam3:{WROOT}/third_party/lingbot_depth:{WROOT}"
--    r = sh(
--        f"PYTHONPATH={PRE_PATH}:$PYTHONPATH {PYBIN} -c \"import sam3, wilddet3d; from wilddet3d import build_model, preprocess; "
--        f"print('PREFLIGHT IMPORT OK')\" 2>&1 | tee log_preflight_import.txt"
--    )
--    if r or "PREFLIGHT IMPORT OK" not in open("log_preflight_import.txt").read():
--        save(rc=26, stage="preflight_import")
--        sys.exit(0)
--    from huggingface_hub import hf_hub_download  # noqa: E402
--
--    ck = hf_hub_download("allenai/WildDet3D", CKPT, revision=HF_REV, local_dir=f"{TMP}/ckpt")
--    got = sha256(ck)
--    open("commits.txt", "a").write(f"\n{CKPT}@{HF_REV} {got}\n")
--    if got != CKPT_SHA:
--        save(rc=22, stage="ckpt_sha", got=got)
--        sys.exit(0)
--    meta["wd3d_commit"] = WD3D_SHA
--    meta["ckpt_sha256"] = got
--    save(stage="stage1")
--    tags = " ".join(TAGS)
--    prompts = " ".join(f'"{p}"' for p in PROMPTS)
--    mf = f" --max-frames {MAXF}" if MAXF else ""
--    os.makedirs("dets", exist_ok=True)
--    # pre-flight: 3 frames on one KITTI and one Munich clip must give >0 object boxes
--    r0 = sh(
--        f"{sys.executable} wd3d_infer.py --wd3d-root {WROOT} --ckpt {ck} --inputs {DS} "
--        f"--tags kitti_highway_sample munich --outdir dets_preflight --device cuda:0 --fp16 1 --max-frames 3 "
--        f"--prompts {prompts} 2>&1 | grep -v 'NMS DEBUG' | tee log_preflight_wd3d.txt"
--    )
--    if r0 or "STAGE1 OK" not in open("log_preflight_wd3d.txt").read():
--        save(rc=27, stage="preflight_wd3d", preflight_rc=r0)
--        sys.exit(0)
--    t1 = time.time()
--    r1 = sh(
--        f"{sys.executable} wd3d_infer.py --wd3d-root {WROOT} --ckpt {ck} --inputs {DS} "
--        f"--tags {tags} --outdir dets --device cuda:0 --fp16 1 --budget-s {BUDGET_S1}{mf} "
--        f"--prompts {prompts} 2>&1 | grep -v 'NMS DEBUG' | tee log_stage1.txt"
--    )
--    stage1_s = round(time.time() - t1, 1)
--    meta["stage1_rc"] = r1
--    meta["stage1_s"] = stage1_s
--    log1 = open("log_stage1.txt").read()
--    if r1 or "STAGE1 OK" not in log1:
--        save(rc=23, stage="stage1_failed")
--        sys.exit(0)
--    try:
--        meta["stage1_summary"] = json.load(open("dets/wd3d_summary.json"))
--    except Exception as e:  # noqa: BLE001
--        meta["stage1_summary_err"] = repr(e)
--if REUSE:  # iter8: link the kept stage-1 dets, stop if any requested clip is missing
--    os.makedirs(f"{OUT}/dets", exist_ok=True)
--    missing, used = [], {}
--    for t in TAGS:
--        for src_, dst in ((f"{REUSE}/wd3d_{t}.npz", f"{OUT}/dets/wd3d_{t}.npz"),
--                          (f"{REUSE}/{t}_dets_ego.json", f"{OUT}/dets/{t}_dets_ego.json")):
--            if os.path.exists(src_):
--                if not os.path.exists(dst):
--                    shutil.copy(src_, dst)
--                used[t] = os.path.basename(dst); break
--        else:
--            missing.append(t)
--    meta["reuse_dets"] = {"dir": REUSE, "used": used, "missing": missing}
--    print("REUSE DETS", json.dumps(meta["reuse_dets"]), flush=True)
--    if missing:
--        save(rc=28, stage="reuse_dets_missing")
--        sys.exit(0)
--    if not SMOKE:
--        sh(f"{PYBIN} -c 'import scipy' 2>/dev/null || {PYBIN} -m pip install -q scipy")
--if not SMOKE:
--    # free WD3D before SAM/DAV2
--    sh(f"rm -rf {WROOT} {TMP}/ckpt")
--    save(stage="install_stage2")
--    r = sh(
--        "pip install -q hydra-core iopath opencv-python-headless huggingface_hub scikit-image && "
--        f"SAM2_BUILD_CUDA=0 pip install -q --no-deps 'git+https://github.com/facebookresearch/sam2.git@{SAM2_PIP}' && "
--        f"rm -rf {TMP}/dav2 && git clone -q https://github.com/DepthAnything/Depth-Anything-V2.git {TMP}/dav2 && "
--        f"git -C {TMP}/dav2 checkout -q {DAV2_SHA} && "
--        f"{sys.executable} -c \"from huggingface_hub import hf_hub_download as d; d('depth-anything/Depth-Anything-V2-Small','{DAV2_CKPT}',local_dir='{WEIGHTS}'); d('facebook/sam2.1-hiera-small','{SAM_CKPT}',local_dir='{WEIGHTS}')\""
--    )
--    if r:
--        save(rc=25, stage="install_stage2")
--        sys.exit(0)
--    meta["weights_sha256"] = {os.path.basename(p): sha256(p) for p in glob.glob(f"{WEIGHTS}/*")}
--    meta["sam2_pip"] = SAM2_PIP
--    meta["dav2_commit"] = DAV2_SHA
--    save(stage="stage2")
--else:
--    save(stage="smoke_stage2")
--
--os.makedirs(f"{OUT}/results", exist_ok=True)
--os.makedirs(f"{OUT}/stills", exist_ok=True)
--os.makedirs(f"{OUT}/tracks", exist_ok=True)
--os.makedirs(f"{OUT}/polylines", exist_ok=True)
--os.makedirs(f"{OUT}/dets_dump", exist_ok=True)
--
--env = dict(os.environ)
--if not SMOKE:
--    env["PYTHONPATH"] = f"{TMP}/dav2:" + env.get("PYTHONPATH", "")
--
--fails = []
--t2 = time.time()
--for tag in TAGS:
--    if time.time() - T0 > WALL_CAP:
--        meta["stopped_for_time"] = True
--        meta["stopped_before"] = tag
--        break
--    v = os.path.join(DS, f"{tag}.mp4")
--    if not os.path.exists(v):
--        fails.append(tag)
--        meta["videos"][tag] = {"rc": 26, "error": "missing video"}
--        save()
--        continue
--    o = f"{OUT}/results/{tag}_foundation_bev_iter8.mp4"
--    dets = f"{OUT}/dets/wd3d_{tag}.npz"
--    if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
--        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter8: reused dets_dump
--    if SMOKE:
--        dets = dets if os.path.exists(dets) else ""
--    elif not os.path.exists(dets):
--        fails.append(tag)
--        meta["videos"][tag] = {"rc": 7, "error": "missing WD3D dets (iter3 does not fall back)"}
--        save()
--        continue
--    spd = motion.get(tag, {}).get("speed_mps", 12.0)
--    mf = f" --max-frames {MAXF}" if MAXF else ""
--    smoke_flag = " --smoke" if SMOKE else ""
--    device = "cpu" if SMOKE else "cuda:0"
--    cmd = (
--        f"{sys.executable} {OUT}/foundation_bev.py --video {v} --output {o} --cam-json {CAMS_JSON} --require-dets {0 if SMOKE else 1} "
--        f"--tag {tag} --speed {spd} --device {device} --weights {WEIGHTS} "
--        f"--stills {OUT}/stills --tracks-csv {OUT}/tracks/{tag}_tracks.csv "
--        f"--polylines-json {OUT}/polylines/{tag}_polylines.json "
--        f"--clip-meta {OUT}/results/{tag}.json --dets-json {OUT}/dets_dump/{tag}_dets_ego.json "
--        + (f"--dets {dets} " if dets and os.path.exists(dets) else "")
--        + mf + smoke_flag
--    )
--    t = time.time()
--    with open(f"{OUT}/log_{tag}.txt", "w") as lf:
--        try:
--            rc = subprocess.run(cmd, shell=True, env=env, stdout=lf, stderr=subprocess.STDOUT, timeout=3600).returncode
--        except subprocess.TimeoutExpired:
--            rc = 124
--    rec = {"rc": rc, "sec": round(time.time() - t, 1)}
--    jp = f"{OUT}/results/{tag}.json"
--    if os.path.exists(jp):
--        rec.update(json.load(open(jp)))
--        rec["rc"] = rc if rc else rec.get("rc", 0)
--    if os.path.exists(o):
--        rec["sha256"] = sha256(o)
--        rec["bytes"] = os.path.getsize(o)
--    else:
--        rec.setdefault("rc", rc or 5)
--        fails.append(tag)
--    if rec.get("rc"):
--        if tag not in fails:
--            fails.append(tag)
--    meta["videos"][tag] = rec
--    save()
--
--meta["stage2_s"] = round(time.time() - t2, 1)
--
--# iter3: ego-speed source comparison per clip (no KITTI oxts available: fallback oxts > flow if consistent > scene > prior)
--print("EGO SPEED COMPARISON (m/s): clip | prior | flow median (valid) | scene closing-rate median (valid) | BEV phase (valid, repeats) | oxts | selected source -> speed", flush=True)
--ego_tab = []
--for tag in TAGS:
--    e = (meta["videos"].get(tag) or {}).get("ego_speed") or {}
--    if e:
--        row = (f"{tag} | {e.get('prior_mps')} | {e.get('flow_median_mps', float('nan')):.1f} ({e.get('flow_valid_frac', 0):.2f}) | "
--               f"{e.get('scene_median_mps', float('nan')):.1f} ({e.get('scene_valid_frac', 0):.2f}) | "
--               f"{e.get('bev_phase_mps', float('nan')):.1f} ({e.get('bev_phase_valid', 0):.2f}, {e.get('n_repeat_frames', 0)}) | {e.get('oxts_mps')} | "
--               f"{e.get('source')} -> {e.get('speed_median_mps', float('nan')):.1f}")
--        print("EGO", row, flush=True)
--        ego_tab.append(row)
--meta["ego_speed_table"] = ego_tab
--
--# iter3: optional YOLOPv2 baseline on the KITTI clips (measurement only; never part of the foundation pipeline).
--# Enabled when FBEV_YOLOPV2 (TorchScript weights) and FBEV_YOLO_REPO (sam-bev-22nov repo dir or .tar.gz) exist.
--YW, YR = os.environ.get("FBEV_YOLOPV2", ""), os.environ.get("FBEV_YOLO_REPO", "")
--if YW and YR and os.path.exists(YW) and os.path.exists(YR) and os.path.exists(os.path.join(DS, "yolo_baseline", "run_yolo_baseline.sh")):
--    ty = time.time()
--    ry = sh(f"bash {DS}/yolo_baseline/run_yolo_baseline.sh {YR} {YW} {DS} {OUT}/yolo_baseline {'cpu' if SMOKE else 'cuda'} "
--            f"{CAMS_JSON} {OUT} 2>&1 | tee {OUT}/log_yolo_baseline.txt")
--    meta["yolo_baseline"] = {"rc": ry, "sec": round(time.time() - ty, 1)}
--else:
--    meta["yolo_baseline"] = "skipped (set FBEV_YOLOPV2 + FBEV_YOLO_REPO)"
--meta["stage1_s"] = stage1_s
--meta["fails"] = fails or "none"
--shas = [r.get("sha256") for r in meta["videos"].values()]
--ok_n = sum(1 for t in TAGS if t in meta["videos"] and meta["videos"][t].get("rc") == 0 and meta["videos"][t].get("sha256"))
--all_done = ok_n == len(TAGS) and not fails and None not in shas and len(set(shas)) == len([s for s in shas if s])
--meta["rc"] = 0 if all_done else (3 if fails else 4)
--
--# README
--lines = []
--lines.append("# Foundation BEV run (WildDet3D + SAM 2.1 + Depth Anything V2 Small)")
--lines.append("")
--lines.append("Free Kaggle T4 only, $0. No TwinLiteNet, no YOLO, no Grounding DINO, no SAM 3.")
--lines.append("")
--lines.append("## Script / model versions")
--lines.append("")
--for k, v in (meta.get("script_sha256") or {}).items():
--    lines.append(f"- `{k}` sha256 `{v}`")
--lines.append(f"- WildDet3D commit `{WD3D_SHA}` (lingbot_depth `{LINGBOT}`, sam3 code submodule `{SAM3_SUB}`: imported by WD3D only)")
--lines.append(f"- WildDet3D checkpoint `{CKPT}` @ `{HF_REV}` sha256 `{CKPT_SHA}`")
--lines.append(f"- sam2 pip git `{SAM2_PIP}`; weights `facebook/sam2.1-hiera-small` / `{SAM_CKPT}`")
--lines.append(f"- Depth Anything V2 Small code `{DAV2_SHA}`; weights `{DAV2_CKPT}`")
--lines.append(f"- GPU: {meta.get('gpu')}")
--lines.append(f"- wall_s: {meta.get('elapsed_s')}; stage1_s: {stage1_s}; stage2_s: {meta.get('stage2_s')}; rc: {meta['rc']}")
--lines.append("")
--lines.append("## iter3 per clip")
--lines.append("")
--lines.append("Lanes: WD3D lane boxes -> SAM masks (skeleton) + top-hat thin stripes in the SAM road -> BEV ->")
--lines.append("lateral clusters -> RANSAC x(z) poly2 -> EMA 0.3, 0.5 m gate, hold 15, centred 7-frame window.")
--lines.append("Edges: SAM drivable-area lower envelope around the ego corridor, object boxes masked, rails rejected.")
--lines.append("Tracks: two-stage IoU+BEV association, CV Kalman + RTS, re-link <= 1.5 m, min length 5.")
--lines.append("")
--for t in TAGS:
--    rec = meta.get("videos", {}).get(t, {})
--    g = rec.get("ground", {}) or {}
--    lines.append(f"- **{t}**: rc={rec.get('rc')}, frames {rec.get('frames_out', '?')}, obj boxes {rec.get('n_obj_dets_npz')}, "
--                 f"tracks {rec.get('n_tracks')}, relinks {rec.get('n_relink')}, pitch {g.get('pitch_deg')} deg ({g.get('pitch_mode')}), "
--                 f"lane width check {rec.get('lane_width_check')}")
--lines.append("")
--lines.append("## Assumptions")
--lines.append("")
--for t in TAGS:
--    a = meta.get("assumptions", {}).get(t, {})
--    lines.append(f"### {t}")
--    lines.append(f"- Intrinsics fx,fy,cx,cy = {a.get('K')}, height {a.get('cam_height')} m")
--    lines.append(f"- Ego motion: {a.get('motion')}")
--    lines.append(f"- Camera: {a.get('cam')}")
--    lines.append("")
--lines.append("## Outputs")
--lines.append("")
--lines.append("- `results/<clip>_foundation_bev_iter8.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
--lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
--lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
--lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
--lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
--lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
--sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter8 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
--if os.path.exists(f"{OUT}/metrics.md"):
--    lines += ["", open(f"{OUT}/metrics.md").read()]
--open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")
--
--sh(f"find {OUT}/results {OUT}/stills {OUT}/tracks {OUT}/polylines {OUT}/dets_dump {OUT}/run_meta.json {OUT}/README.md {OUT}/metrics.md -type f 2>/dev/null | sort | xargs -r sha256sum > {OUT}/SHA256SUMS.txt")
--save(stage="end")
--print("RC", meta["rc"], "fails", fails or "none", flush=True)
-diff -ruN -x __pycache__ iter8_spec/src/run_iter9.py iter9_spec/src/run_iter9.py
---- iter8_spec/src/run_iter9.py	1970-01-01 05:30:00.000000000 +0530
-+++ iter9_spec/src/run_iter9.py	2026-11-24 12:55:33.515059928 +0530
++        if st is None or not st["L"]:
++            return None
++        return tuple(float(np.median([l[i] for l in st["L"]])) for i in range(3))
++
++    def _step(self, role, x, side, cars, ref_slope, ds=0.0, lanes=None):
+         st = self.s.get(role)
+         if st is not None:  # ego moved forward ds: a world line at frame-k z sits at z - ds now
+             st["L"] = [(q + B * ds, B, ze - ds) for q, B, ze in st["L"]]
+diff -ruN -x __pycache__ iter9_spec/src/run_iter10.py iter10_spec/src/run_iter10.py
+--- iter9_spec/src/run_iter10.py	1970-01-01 05:30:00.000000000 +0530
++++ iter10_spec/src/run_iter10.py	2026-11-24 15:22:53.189349816 +0530
 @@ -0,0 +1,394 @@
 +# Foundation BEV iter3 (draft spec, 23 Nov 2026): iter2 kernel + bev_gate.py (detection gates, track filters,
 +# static dots) + ego_motion.py (visual ego speed/yaw, curved ego path) + per-frame dets/depth/ego dump
@@ -940,7 +529,7 @@ diff -ruN -x __pycache__ iter8_spec/src/run_iter9.py iter9_spec/src/run_iter9.py
 +    shutil.copy2(src, os.path.join(OUT, fn))
 +    meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
 +
-+CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter9.json", "cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
++CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter10.json", "cams_iter9.json", "cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
 +cams = json.load(open(CAMS_JSON))
 +meta["cams_json"] = os.path.basename(CAMS_JSON)
 +motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
@@ -1098,7 +687,7 @@ diff -ruN -x __pycache__ iter8_spec/src/run_iter9.py iter9_spec/src/run_iter9.py
 +        meta["videos"][tag] = {"rc": 26, "error": "missing video"}
 +        save()
 +        continue
-+    o = f"{OUT}/results/{tag}_foundation_bev_iter9.mp4"
++    o = f"{OUT}/results/{tag}_foundation_bev_iter10.mp4"
 +    dets = f"{OUT}/dets/wd3d_{tag}.npz"
 +    if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
 +        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter8: reused dets_dump
@@ -1220,13 +809,13 @@ diff -ruN -x __pycache__ iter8_spec/src/run_iter9.py iter9_spec/src/run_iter9.py
 +    lines.append("")
 +lines.append("## Outputs")
 +lines.append("")
-+lines.append("- `results/<clip>_foundation_bev_iter9.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
++lines.append("- `results/<clip>_foundation_bev_iter10.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
 +lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
 +lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
 +lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
 +lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
 +lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
-+sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter9 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
++sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter10 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
 +if os.path.exists(f"{OUT}/metrics.md"):
 +    lines += ["", open(f"{OUT}/metrics.md").read()]
 +open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")
@@ -1234,3 +823,401 @@ diff -ruN -x __pycache__ iter8_spec/src/run_iter9.py iter9_spec/src/run_iter9.py
 +sh(f"find {OUT}/results {OUT}/stills {OUT}/tracks {OUT}/polylines {OUT}/dets_dump {OUT}/run_meta.json {OUT}/README.md {OUT}/metrics.md -type f 2>/dev/null | sort | xargs -r sha256sum > {OUT}/SHA256SUMS.txt")
 +save(stage="end")
 +print("RC", meta["rc"], "fails", fails or "none", flush=True)
+diff -ruN -x __pycache__ iter9_spec/src/run_iter9.py iter10_spec/src/run_iter9.py
+--- iter9_spec/src/run_iter9.py	2026-11-24 12:55:33.515059928 +0530
++++ iter10_spec/src/run_iter9.py	1970-01-01 05:30:00.000000000 +0530
+@@ -1,394 +0,0 @@
+-# Foundation BEV iter3 (draft spec, 23 Nov 2026): iter2 kernel + bev_gate.py (detection gates, track filters,
+-# static dots) + ego_motion.py (visual ego speed/yaw, curved ego path) + per-frame dets/depth/ego dump
+-# + ego-speed source comparison + optional YOLOPv2 baseline (measurement only).
+-# Previous header (iter2, based on GPU Bot's iter1 kernel):
+-# Changes: bash -o pipefail everywhere; WildDet3D submodules (lingbot_depth + sam3 code) init --recursive and
+-# pin-checked; import pre-flight + 3-frame WD3D pre-flight; stage 1 must print STAGE1 OK with >0 object boxes
+-# or the run stops (no silent fallback); stage 2 = iter2 foundation_bev.py (+ bev_smooth.py) with --require-dets;
+-# outputs *_foundation_bev_iter2.mp4 (never overwrites iter1 names); smoothness_metrics.py report at the end.
+-# Free Kaggle T4 only, $0. No TwinLiteNet, no YOLO, no Grounding DINO, no SAM 3.
+-# Stage 1: WildDet3D text prompts car/person/bicycle + lane/edge boxes.
+-# Stage 2: SAM 2.1 (box prompts, else lower-half fallback) + DAV2-S lift + BEV render.
+-# Outputs: *_foundation_bev.mp4, stills/, tracks/, polylines/, run_meta.json, README.md.
+-import glob, hashlib, json, os, shutil, subprocess, sys, time
+-from pathlib import Path
+-
+-T0 = time.time()
+-OUT = os.environ.get("FBEV_OUT", "/kaggle/working")
+-TMP = os.environ.get("FBEV_TMP", "/kaggle/temp/w")
+-os.makedirs(OUT, exist_ok=True)
+-os.makedirs(TMP, exist_ok=True)
+-os.chdir(OUT)
+-meta = {"rc": 1, "spend_usd": 0, "videos": {}, "stage": "start"}
+-PYBIN = sys.executable
+-
+-WD3D_SHA = "1b8aa52b6ff3f00d0ebfa07175efc0c0c440964a"
+-LINGBOT = "ff29de5bf433d1b1519cd851da00bc652668964a"
+-SAM3_SUB = "159490bb13108749dd5ceff68f42cd1792e60641"  # pin used by the working drive-videos-22nov WD3D kernel
+-HF_REV = "161edb26239f58d8973045517d9c8b179c515f73"
+-CKPT = "wilddet3d_alldata_all_prompt_v1.0.pt"
+-CKPT_SHA = "f8b6a9e548f733ba62625a0d2adc4b0f4fdb6007ee11d9927f9c1027010fee57"
+-SAM2_PIP = "2b90b9f5ceec907a1c18123530e92e794ad901a4"
+-DAV2_SHA = "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf"
+-SAM_CKPT = "sam2.1_hiera_small.pt"
+-DAV2_CKPT = "depth_anything_v2_vits.pth"
+-PROMPTS = ["car", "person", "bicycle", "lane line", "lane marking", "road edge", "road curb"]
+-TAGS = [
+-    "kitti_highway_sample", "kitti_highway_exit_approach", "kitti_highway_late",
+-    "kitti_highway_final", "kitti_city_cyclist_candidate", "kitti_lane_split_candidate",
+-    "munich", "a2d2a", "a2d2b",
+-]
+-BUDGET_S1 = float(os.environ.get("FBEV_BUDGET_S1", str(2.6 * 3600)))
+-WALL_CAP = float(os.environ.get("FBEV_WALL_CAP", str(3.8 * 3600)))
+-MAXF = int(os.environ.get("FBEV_MAXF", "0"))
+-SMOKE = os.environ.get("FBEV_SMOKE") == "1"
+-# iter8: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
+-# <tag>_dets_ego.json (dets_dump); WildDet3D install/pre-flight/stage 1 are skipped. FBEV_TAGS = comma list of clips.
+-REUSE = os.environ.get("FBEV_REUSE_DETS", "")
+-if os.environ.get("FBEV_TAGS"):
+-    TAGS = [t for t in TAGS if t in os.environ["FBEV_TAGS"].split(",")]
+-
+-
+-def sh(c, **k):
+-    # iter2: pipefail, so `cmd | tee log` returns cmd's exit code (iter1 recorded tee's 0)
+-    print("+", c, flush=True)
+-    return subprocess.run(["bash", "-o", "pipefail", "-c", c], **k).returncode
+-
+-
+-def sha256(p):
+-    h = hashlib.sha256()
+-    with open(p, "rb") as f:
+-        for chunk in iter(lambda: f.read(1 << 20), b""):
+-            h.update(chunk)
+-    return h.hexdigest()
+-
+-
+-def save(**kw):
+-    meta.update(kw)
+-    meta["elapsed_s"] = round(time.time() - T0, 1)
+-    json.dump(meta, open(f"{OUT}/run_meta.json", "w"), indent=1)
+-
+-
+-def find_ds():
+-    hits = glob.glob("/kaggle/input/**/cams.json", recursive=True)
+-    if hits:
+-        return os.path.dirname(hits[0])
+-    # local smoke
+-    for c in (os.environ.get("FBEV_DS", ""), "/workspace/gpubot/foundation-bev-23nov/ds"):
+-        if c and os.path.exists(os.path.join(c, "cams.json")):
+-            return c
+-    return ""
+-
+-
+-DS = find_ds()
+-if not DS:
+-    save(rc=20, stage="no_dataset")
+-    sys.exit(0)
+-meta["dataset"] = DS
+-
+-# copy scripts (Kaggle may have extracted src/)
+-SRC = os.path.join(DS, "src")
+-for fn in ("wd3d_infer.py", "foundation_bev.py", "bev_smooth.py", "bev_gate.py", "ego_motion.py", "lines_mt.py", "bev_ipm.py", "smoothness_metrics.py", "analyze_polylines.py"):
+-    src = os.path.join(SRC, fn)
+-    if not os.path.exists(src):
+-        src = os.path.join(DS, fn)
+-    if not os.path.exists(src):
+-        save(rc=20, stage=f"missing_{fn}")
+-        sys.exit(0)
+-    shutil.copy2(src, os.path.join(OUT, fn))
+-    meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
+-
+-CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter9.json", "cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
+-cams = json.load(open(CAMS_JSON))
+-meta["cams_json"] = os.path.basename(CAMS_JSON)
+-motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
+-meta["assumptions"] = {t: {"cam": cams[t].get("note", ""), "motion": motion[t].get("note", ""),
+-                           "speed_mps": motion[t]["speed_mps"], "K": [cams[t]["fx"], cams[t]["fy"], cams[t]["cx"], cams[t]["cy"]],
+-                           "cam_height": cams[t]["height"]} for t in TAGS if t in cams}
+-
+-gpu = subprocess.run("nvidia-smi --query-gpu=name --format=csv,noheader", shell=True,
+-                     capture_output=True, text=True).stdout.strip()
+-meta["gpu"] = gpu or ("cpu-smoke" if SMOKE else "unknown")
+-save(stage="dataset_ok")
+-
+-WROOT = f"{TMP}/wilddet3d"
+-WEIGHTS = f"{TMP}/weights"
+-os.makedirs(WEIGHTS, exist_ok=True)
+-ck = ""
+-stage1_s = 0
+-if not SMOKE and not REUSE:
+-    # --- install WildDet3D (same recipe as drive-videos-22nov-wilddet3d, rc=0) ---
+-    r = sh(
+-        f'{PYBIN} -m pip install -q --upgrade "setuptools<80" && '
+-        f'{PYBIN} -m pip install -q --no-deps einops timm "ftfy==6.1.1" iopath portalocker regex huggingface_hub pyquaternion scipy ml_collections && '
+-        f'{PYBIN} -m pip install -q --no-deps "utils3d @ git+https://github.com/EasternJournalist/utils3d.git" && '
+-        f'({PYBIN} -c "import vis4d" 2>/dev/null || {PYBIN} -m pip install -q vis4d==1.0.0) && '
+-        f'({PYBIN} -c "import vis4d_cuda_ops" 2>/dev/null || {PYBIN} -m pip install -q "git+https://github.com/SysCV/vis4d_cuda_ops.git" --no-build-isolation --no-cache-dir) 2>&1 | tail -8 | tee log_install1.txt'
+-    )
+-    if r:
+-        save(rc=21, stage="install_stage1")
+-        sys.exit(0)
+-    r = sh(
+-        f"rm -rf {WROOT} && git clone -q https://github.com/allenai/WildDet3D.git {WROOT} && "
+-        f"git -C {WROOT} checkout -q {WD3D_SHA} && "
+-        f"git -C {WROOT} submodule update --init --recursive --quiet && "
+-        f"git -C {WROOT} rev-parse HEAD | tee commits.txt && "
+-        f"git -C {WROOT} submodule status --recursive | tee -a commits.txt"
+-    )
+-    if r:
+-        save(rc=21, stage="clone_wd3d")
+-        sys.exit(0)
+-    st = open("commits.txt").read()
+-    if LINGBOT not in st or SAM3_SUB not in st:
+-        save(rc=21, stage="submodule_pin_mismatch", submodules=st[-600:])
+-        sys.exit(0)
+-    # sam3 is initialised as CODE only: WildDet3D's model.py imports it. No SAM 3 weights are downloaded,
+-    # and SAM 3 is not run as a segmenter (WD3D's own checkpoint carries its weights).
+-    PRE_PATH = f"{WROOT}/third_party/sam3:{WROOT}/third_party/lingbot_depth:{WROOT}"
+-    r = sh(
+-        f"PYTHONPATH={PRE_PATH}:$PYTHONPATH {PYBIN} -c \"import sam3, wilddet3d; from wilddet3d import build_model, preprocess; "
+-        f"print('PREFLIGHT IMPORT OK')\" 2>&1 | tee log_preflight_import.txt"
+-    )
+-    if r or "PREFLIGHT IMPORT OK" not in open("log_preflight_import.txt").read():
+-        save(rc=26, stage="preflight_import")
+-        sys.exit(0)
+-    from huggingface_hub import hf_hub_download  # noqa: E402
+-
+-    ck = hf_hub_download("allenai/WildDet3D", CKPT, revision=HF_REV, local_dir=f"{TMP}/ckpt")
+-    got = sha256(ck)
+-    open("commits.txt", "a").write(f"\n{CKPT}@{HF_REV} {got}\n")
+-    if got != CKPT_SHA:
+-        save(rc=22, stage="ckpt_sha", got=got)
+-        sys.exit(0)
+-    meta["wd3d_commit"] = WD3D_SHA
+-    meta["ckpt_sha256"] = got
+-    save(stage="stage1")
+-    tags = " ".join(TAGS)
+-    prompts = " ".join(f'"{p}"' for p in PROMPTS)
+-    mf = f" --max-frames {MAXF}" if MAXF else ""
+-    os.makedirs("dets", exist_ok=True)
+-    # pre-flight: 3 frames on one KITTI and one Munich clip must give >0 object boxes
+-    r0 = sh(
+-        f"{sys.executable} wd3d_infer.py --wd3d-root {WROOT} --ckpt {ck} --inputs {DS} "
+-        f"--tags kitti_highway_sample munich --outdir dets_preflight --device cuda:0 --fp16 1 --max-frames 3 "
+-        f"--prompts {prompts} 2>&1 | grep -v 'NMS DEBUG' | tee log_preflight_wd3d.txt"
+-    )
+-    if r0 or "STAGE1 OK" not in open("log_preflight_wd3d.txt").read():
+-        save(rc=27, stage="preflight_wd3d", preflight_rc=r0)
+-        sys.exit(0)
+-    t1 = time.time()
+-    r1 = sh(
+-        f"{sys.executable} wd3d_infer.py --wd3d-root {WROOT} --ckpt {ck} --inputs {DS} "
+-        f"--tags {tags} --outdir dets --device cuda:0 --fp16 1 --budget-s {BUDGET_S1}{mf} "
+-        f"--prompts {prompts} 2>&1 | grep -v 'NMS DEBUG' | tee log_stage1.txt"
+-    )
+-    stage1_s = round(time.time() - t1, 1)
+-    meta["stage1_rc"] = r1
+-    meta["stage1_s"] = stage1_s
+-    log1 = open("log_stage1.txt").read()
+-    if r1 or "STAGE1 OK" not in log1:
+-        save(rc=23, stage="stage1_failed")
+-        sys.exit(0)
+-    try:
+-        meta["stage1_summary"] = json.load(open("dets/wd3d_summary.json"))
+-    except Exception as e:  # noqa: BLE001
+-        meta["stage1_summary_err"] = repr(e)
+-if REUSE:  # iter8: link the kept stage-1 dets, stop if any requested clip is missing
+-    os.makedirs(f"{OUT}/dets", exist_ok=True)
+-    missing, used = [], {}
+-    for t in TAGS:
+-        for src_, dst in ((f"{REUSE}/wd3d_{t}.npz", f"{OUT}/dets/wd3d_{t}.npz"),
+-                          (f"{REUSE}/{t}_dets_ego.json", f"{OUT}/dets/{t}_dets_ego.json")):
+-            if os.path.exists(src_):
+-                if not os.path.exists(dst):
+-                    shutil.copy(src_, dst)
+-                used[t] = os.path.basename(dst); break
+-        else:
+-            missing.append(t)
+-    meta["reuse_dets"] = {"dir": REUSE, "used": used, "missing": missing}
+-    print("REUSE DETS", json.dumps(meta["reuse_dets"]), flush=True)
+-    if missing:
+-        save(rc=28, stage="reuse_dets_missing")
+-        sys.exit(0)
+-    if not SMOKE:
+-        sh(f"{PYBIN} -c 'import scipy' 2>/dev/null || {PYBIN} -m pip install -q scipy")
+-if not SMOKE:
+-    # free WD3D before SAM/DAV2
+-    sh(f"rm -rf {WROOT} {TMP}/ckpt")
+-    save(stage="install_stage2")
+-    r = sh(
+-        "pip install -q hydra-core iopath opencv-python-headless huggingface_hub scikit-image && "
+-        f"SAM2_BUILD_CUDA=0 pip install -q --no-deps 'git+https://github.com/facebookresearch/sam2.git@{SAM2_PIP}' && "
+-        f"rm -rf {TMP}/dav2 && git clone -q https://github.com/DepthAnything/Depth-Anything-V2.git {TMP}/dav2 && "
+-        f"git -C {TMP}/dav2 checkout -q {DAV2_SHA} && "
+-        f"{sys.executable} -c \"from huggingface_hub import hf_hub_download as d; d('depth-anything/Depth-Anything-V2-Small','{DAV2_CKPT}',local_dir='{WEIGHTS}'); d('facebook/sam2.1-hiera-small','{SAM_CKPT}',local_dir='{WEIGHTS}')\""
+-    )
+-    if r:
+-        save(rc=25, stage="install_stage2")
+-        sys.exit(0)
+-    meta["weights_sha256"] = {os.path.basename(p): sha256(p) for p in glob.glob(f"{WEIGHTS}/*")}
+-    meta["sam2_pip"] = SAM2_PIP
+-    meta["dav2_commit"] = DAV2_SHA
+-    save(stage="stage2")
+-else:
+-    save(stage="smoke_stage2")
+-
+-os.makedirs(f"{OUT}/results", exist_ok=True)
+-os.makedirs(f"{OUT}/stills", exist_ok=True)
+-os.makedirs(f"{OUT}/tracks", exist_ok=True)
+-os.makedirs(f"{OUT}/polylines", exist_ok=True)
+-os.makedirs(f"{OUT}/dets_dump", exist_ok=True)
+-
+-env = dict(os.environ)
+-if not SMOKE:
+-    env["PYTHONPATH"] = f"{TMP}/dav2:" + env.get("PYTHONPATH", "")
+-
+-fails = []
+-t2 = time.time()
+-for tag in TAGS:
+-    if time.time() - T0 > WALL_CAP:
+-        meta["stopped_for_time"] = True
+-        meta["stopped_before"] = tag
+-        break
+-    v = os.path.join(DS, f"{tag}.mp4")
+-    if not os.path.exists(v):
+-        fails.append(tag)
+-        meta["videos"][tag] = {"rc": 26, "error": "missing video"}
+-        save()
+-        continue
+-    o = f"{OUT}/results/{tag}_foundation_bev_iter9.mp4"
+-    dets = f"{OUT}/dets/wd3d_{tag}.npz"
+-    if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
+-        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter8: reused dets_dump
+-    if SMOKE:
+-        dets = dets if os.path.exists(dets) else ""
+-    elif not os.path.exists(dets):
+-        fails.append(tag)
+-        meta["videos"][tag] = {"rc": 7, "error": "missing WD3D dets (iter3 does not fall back)"}
+-        save()
+-        continue
+-    spd = motion.get(tag, {}).get("speed_mps", 12.0)
+-    mf = f" --max-frames {MAXF}" if MAXF else ""
+-    smoke_flag = " --smoke" if SMOKE else ""
+-    device = "cpu" if SMOKE else "cuda:0"
+-    cmd = (
+-        f"{sys.executable} {OUT}/foundation_bev.py --video {v} --output {o} --cam-json {CAMS_JSON} --require-dets {0 if SMOKE else 1} "
+-        f"--tag {tag} --speed {spd} --device {device} --weights {WEIGHTS} "
+-        f"--stills {OUT}/stills --tracks-csv {OUT}/tracks/{tag}_tracks.csv "
+-        f"--polylines-json {OUT}/polylines/{tag}_polylines.json "
+-        f"--clip-meta {OUT}/results/{tag}.json --dets-json {OUT}/dets_dump/{tag}_dets_ego.json "
+-        + (f"--dets {dets} " if dets and os.path.exists(dets) else "")
+-        + mf + smoke_flag
+-    )
+-    t = time.time()
+-    with open(f"{OUT}/log_{tag}.txt", "w") as lf:
+-        try:
+-            rc = subprocess.run(cmd, shell=True, env=env, stdout=lf, stderr=subprocess.STDOUT, timeout=3600).returncode
+-        except subprocess.TimeoutExpired:
+-            rc = 124
+-    rec = {"rc": rc, "sec": round(time.time() - t, 1)}
+-    jp = f"{OUT}/results/{tag}.json"
+-    if os.path.exists(jp):
+-        rec.update(json.load(open(jp)))
+-        rec["rc"] = rc if rc else rec.get("rc", 0)
+-    if os.path.exists(o):
+-        rec["sha256"] = sha256(o)
+-        rec["bytes"] = os.path.getsize(o)
+-    else:
+-        rec.setdefault("rc", rc or 5)
+-        fails.append(tag)
+-    if rec.get("rc"):
+-        if tag not in fails:
+-            fails.append(tag)
+-    meta["videos"][tag] = rec
+-    save()
+-
+-meta["stage2_s"] = round(time.time() - t2, 1)
+-
+-# iter3: ego-speed source comparison per clip (no KITTI oxts available: fallback oxts > flow if consistent > scene > prior)
+-print("EGO SPEED COMPARISON (m/s): clip | prior | flow median (valid) | scene closing-rate median (valid) | BEV phase (valid, repeats) | oxts | selected source -> speed", flush=True)
+-ego_tab = []
+-for tag in TAGS:
+-    e = (meta["videos"].get(tag) or {}).get("ego_speed") or {}
+-    if e:
+-        row = (f"{tag} | {e.get('prior_mps')} | {e.get('flow_median_mps', float('nan')):.1f} ({e.get('flow_valid_frac', 0):.2f}) | "
+-               f"{e.get('scene_median_mps', float('nan')):.1f} ({e.get('scene_valid_frac', 0):.2f}) | "
+-               f"{e.get('bev_phase_mps', float('nan')):.1f} ({e.get('bev_phase_valid', 0):.2f}, {e.get('n_repeat_frames', 0)}) | {e.get('oxts_mps')} | "
+-               f"{e.get('source')} -> {e.get('speed_median_mps', float('nan')):.1f}")
+-        print("EGO", row, flush=True)
+-        ego_tab.append(row)
+-meta["ego_speed_table"] = ego_tab
+-
+-# iter3: optional YOLOPv2 baseline on the KITTI clips (measurement only; never part of the foundation pipeline).
+-# Enabled when FBEV_YOLOPV2 (TorchScript weights) and FBEV_YOLO_REPO (sam-bev-22nov repo dir or .tar.gz) exist.
+-YW, YR = os.environ.get("FBEV_YOLOPV2", ""), os.environ.get("FBEV_YOLO_REPO", "")
+-if YW and YR and os.path.exists(YW) and os.path.exists(YR) and os.path.exists(os.path.join(DS, "yolo_baseline", "run_yolo_baseline.sh")):
+-    ty = time.time()
+-    ry = sh(f"bash {DS}/yolo_baseline/run_yolo_baseline.sh {YR} {YW} {DS} {OUT}/yolo_baseline {'cpu' if SMOKE else 'cuda'} "
+-            f"{CAMS_JSON} {OUT} 2>&1 | tee {OUT}/log_yolo_baseline.txt")
+-    meta["yolo_baseline"] = {"rc": ry, "sec": round(time.time() - ty, 1)}
+-else:
+-    meta["yolo_baseline"] = "skipped (set FBEV_YOLOPV2 + FBEV_YOLO_REPO)"
+-meta["stage1_s"] = stage1_s
+-meta["fails"] = fails or "none"
+-shas = [r.get("sha256") for r in meta["videos"].values()]
+-ok_n = sum(1 for t in TAGS if t in meta["videos"] and meta["videos"][t].get("rc") == 0 and meta["videos"][t].get("sha256"))
+-all_done = ok_n == len(TAGS) and not fails and None not in shas and len(set(shas)) == len([s for s in shas if s])
+-meta["rc"] = 0 if all_done else (3 if fails else 4)
+-
+-# README
+-lines = []
+-lines.append("# Foundation BEV run (WildDet3D + SAM 2.1 + Depth Anything V2 Small)")
+-lines.append("")
+-lines.append("Free Kaggle T4 only, $0. No TwinLiteNet, no YOLO, no Grounding DINO, no SAM 3.")
+-lines.append("")
+-lines.append("## Script / model versions")
+-lines.append("")
+-for k, v in (meta.get("script_sha256") or {}).items():
+-    lines.append(f"- `{k}` sha256 `{v}`")
+-lines.append(f"- WildDet3D commit `{WD3D_SHA}` (lingbot_depth `{LINGBOT}`, sam3 code submodule `{SAM3_SUB}`: imported by WD3D only)")
+-lines.append(f"- WildDet3D checkpoint `{CKPT}` @ `{HF_REV}` sha256 `{CKPT_SHA}`")
+-lines.append(f"- sam2 pip git `{SAM2_PIP}`; weights `facebook/sam2.1-hiera-small` / `{SAM_CKPT}`")
+-lines.append(f"- Depth Anything V2 Small code `{DAV2_SHA}`; weights `{DAV2_CKPT}`")
+-lines.append(f"- GPU: {meta.get('gpu')}")
+-lines.append(f"- wall_s: {meta.get('elapsed_s')}; stage1_s: {stage1_s}; stage2_s: {meta.get('stage2_s')}; rc: {meta['rc']}")
+-lines.append("")
+-lines.append("## iter3 per clip")
+-lines.append("")
+-lines.append("Lanes: WD3D lane boxes -> SAM masks (skeleton) + top-hat thin stripes in the SAM road -> BEV ->")
+-lines.append("lateral clusters -> RANSAC x(z) poly2 -> EMA 0.3, 0.5 m gate, hold 15, centred 7-frame window.")
+-lines.append("Edges: SAM drivable-area lower envelope around the ego corridor, object boxes masked, rails rejected.")
+-lines.append("Tracks: two-stage IoU+BEV association, CV Kalman + RTS, re-link <= 1.5 m, min length 5.")
+-lines.append("")
+-for t in TAGS:
+-    rec = meta.get("videos", {}).get(t, {})
+-    g = rec.get("ground", {}) or {}
+-    lines.append(f"- **{t}**: rc={rec.get('rc')}, frames {rec.get('frames_out', '?')}, obj boxes {rec.get('n_obj_dets_npz')}, "
+-                 f"tracks {rec.get('n_tracks')}, relinks {rec.get('n_relink')}, pitch {g.get('pitch_deg')} deg ({g.get('pitch_mode')}), "
+-                 f"lane width check {rec.get('lane_width_check')}")
+-lines.append("")
+-lines.append("## Assumptions")
+-lines.append("")
+-for t in TAGS:
+-    a = meta.get("assumptions", {}).get(t, {})
+-    lines.append(f"### {t}")
+-    lines.append(f"- Intrinsics fx,fy,cx,cy = {a.get('K')}, height {a.get('cam_height')} m")
+-    lines.append(f"- Ego motion: {a.get('motion')}")
+-    lines.append(f"- Camera: {a.get('cam')}")
+-    lines.append("")
+-lines.append("## Outputs")
+-lines.append("")
+-lines.append("- `results/<clip>_foundation_bev_iter9.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
+-lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
+-lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
+-lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
+-lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
+-lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
+-sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter9 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
+-if os.path.exists(f"{OUT}/metrics.md"):
+-    lines += ["", open(f"{OUT}/metrics.md").read()]
+-open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")
+-
+-sh(f"find {OUT}/results {OUT}/stills {OUT}/tracks {OUT}/polylines {OUT}/dets_dump {OUT}/run_meta.json {OUT}/README.md {OUT}/metrics.md -type f 2>/dev/null | sort | xargs -r sha256sum > {OUT}/SHA256SUMS.txt")
+-save(stage="end")
+-print("RC", meta["rc"], "fails", fails or "none", flush=True)

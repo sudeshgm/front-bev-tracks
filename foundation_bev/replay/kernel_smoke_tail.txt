@@ -1,0 +1,14 @@
+NP1_SIM active: hasattr(np,'trapezoid') = False
+EGO SPEED COMPARISON (m/s): clip | prior | flow median (valid) | scene closing-rate median (valid) | BEV phase (valid, repeats) | oxts | selected source -> speed
+EGO kitti_highway_sample | 25.0 | 2.6 (0.75) | 25.0 (0.00) | 25.3 (0.43, 0) | None | prior -> 25.0
+EGO kitti_highway_exit_approach | 22.0 | 1.2 (0.88) | 22.0 (0.00) | 24.3 (0.14, 0) | None | prior -> 22.0
+EGO kitti_highway_late | 25.0 | 1.6 (0.75) | 25.0 (0.00) | 16.8 (0.71, 0) | None | bev_phase -> 16.8
+EGO kitti_highway_final | 25.0 | 4.8 (0.88) | 25.0 (0.00) | 19.2 (1.00, 0) | None | bev_phase -> 19.2
+EGO kitti_city_cyclist_candidate | 10.0 | 12.3 (0.88) | 10.0 (0.00) | 11.8 (1.00, 0) | None | bev_phase -> 11.8
+EGO kitti_lane_split_candidate | 18.0 | 5.1 (0.88) | 18.0 (0.00) | 2.3 (0.29, 0) | None | prior -> 18.0
+EGO munich | 12.0 | 18.6 (0.75) | 12.0 (0.00) | 21.2 (1.00, 4) | None | prior -> 12.0
+EGO a2d2a | 8.0 | 6.9 (0.50) | 8.0 (0.00) | 0.0 (0.57, 0) | None | prior -> 8.0
+EGO a2d2b | 8.0 | 7.2 (0.75) | 8.0 (0.00) | 0.3 (0.86, 0) | None | flow -> 6.9
++ cd /workspace/foundation_bev/iter10_spec/smoke_kernel/out && /usr/bin/python3 smoothness_metrics.py --run /workspace/foundation_bev/iter10_spec/smoke_kernel/out --label iter10 --out /workspace/foundation_bev/iter10_spec/smoke_kernel/out/metrics.md --json /workspace/foundation_bev/iter10_spec/smoke_kernel/out/metrics.json > log_metrics.txt 2>&1
++ find /workspace/foundation_bev/iter10_spec/smoke_kernel/out/results /workspace/foundation_bev/iter10_spec/smoke_kernel/out/stills /workspace/foundation_bev/iter10_spec/smoke_kernel/out/tracks /workspace/foundation_bev/iter10_spec/smoke_kernel/out/polylines /workspace/foundation_bev/iter10_spec/smoke_kernel/out/dets_dump /workspace/foundation_bev/iter10_spec/smoke_kernel/out/run_meta.json /workspace/foundation_bev/iter10_spec/smoke_kernel/out/README.md /workspace/foundation_bev/iter10_spec/smoke_kernel/out/metrics.md -type f 2>/dev/null | sort | xargs -r sha256sum > /workspace/foundation_bev/iter10_spec/smoke_kernel/out/SHA256SUMS.txt
+RC 0 fails none

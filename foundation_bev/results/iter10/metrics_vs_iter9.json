@@ -1,0 +1,344 @@
+{
+  "flags_drop": [],
+  "flags_accel": [],
+  "flags_idsw": [],
+  "gore_pass": false,
+  "munich": {
+    "iter9_present": 757,
+    "iter10_present": 776,
+    "delta": 19,
+    "raw10": 824,
+    "gain": {
+      "n": 30,
+      "ranges": "f0162\u2013f0164,f0167\u2013f0188,f0256,f0258,f0266\u2013f0267,f0618",
+      "frames": [
+        162,
+        163,
+        164,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        256,
+        258,
+        266,
+        267,
+        618
+      ]
+    },
+    "loss": {
+      "n": 11,
+      "ranges": "f0520\u2013f0526,f0557\u2013f0560",
+      "frames": [
+        520,
+        521,
+        522,
+        523,
+        524,
+        525,
+        526,
+        557,
+        558,
+        559,
+        560
+      ]
+    },
+    "expected_already": {
+      "n": 13,
+      "ranges": "f0158\u2013f0161,f0257,f0259\u2013f0265,f0647",
+      "frames": [
+        158,
+        159,
+        160,
+        161,
+        257,
+        259,
+        260,
+        261,
+        262,
+        263,
+        264,
+        265,
+        647
+      ]
+    },
+    "expected_gained": {
+      "n": 14,
+      "ranges": "f0162\u2013f0164,f0167\u2013f0173,f0256,f0258,f0266\u2013f0267",
+      "frames": [
+        162,
+        163,
+        164,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        256,
+        258,
+        266,
+        267
+      ]
+    },
+    "expected_still": {
+      "n": 2,
+      "ranges": "f0165\u2013f0166",
+      "frames": [
+        165,
+        166
+      ]
+    },
+    "miss_trimmed": {
+      "n": 72,
+      "ranges": "f0002\u2013f0012,f0144\u2013f0147,f0228\u2013f0254,f0520\u2013f0526,f0535\u2013f0541,f0550\u2013f0560,f0614\u2013f0617,f0658"
+    },
+    "miss_beyond": {
+      "n": 8,
+      "ranges": "f0148\u2013f0155"
+    },
+    "miss_absent": {
+      "n": 44,
+      "ranges": "f0000\u2013f0001,f0013,f0165\u2013f0166,f0189\u2013f0227"
+    }
+  },
+  "held10": {
+    "kitti_highway_sample": {
+      "n": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_highway_exit_approach": {
+      "n": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_highway_late": {
+      "n": 9,
+      "ranges": "f0014,f0021\u2013f0022,f0033\u2013f0036,f0038\u2013f0039"
+    },
+    "kitti_highway_final": {
+      "n": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_city_cyclist_candidate": {
+      "n": 2,
+      "ranges": "f0028\u2013f0029"
+    },
+    "kitti_lane_split_candidate": {
+      "n": 7,
+      "ranges": "f0005\u2013f0006,f0018\u2013f0019,f0025,f0028\u2013f0029"
+    },
+    "munich": {
+      "n": 189,
+      "ranges": "f0004\u2013f0007,f0009\u2013f0013,f0044,f0054\u2013f0055,f0062\u2013f0067,f0120\u2013f0121,f0136\u2013f0141,f0144\u2013f0147,f0152\u2013f0153,f0156\u2013f0157,f0160\u2013f0166,f0170\u2013f0188,f0202\u2013f0203,f0246\u2013f0247,f0249,f0253\u2013f0254,f0259\u2013f0260,f0264\u2013f0265,f0290\u2013f0293,f0298\u2013f0301,f0336\u2013f0337,f0360\u2013f0361,f0414\u2013f0415,f0422\u2013f0423,f0432\u2013f0433,f0436\u2013f0437,f0456\u2013f0457,f0474\u2013f0475,f0512\u2013f0513,f0515\u2013f0516,f0518\u2013f0519,f0527\u2013f0535,f0544\u2013f0545,f0562\u2013f0567,f0570\u2013f0571,f0573\u2013f0575,f0584\u2013f0587,f0602\u2013f0611,f0616\u2013f0617,f0622\u2013f0623,f0641\u2013f0643,f0648\u2013f0657,f0660\u2013f0665,f0668\u2013f0671,f0688\u2013f0689,f0692\u2013f0693,f0700\u2013f0704,f0706\u2013f0707,f0858\u2013f0859,f0866\u2013f0867,f0870\u2013f0873,f0876\u2013f0877,f0896\u2013f0899"
+    },
+    "a2d2a": {
+      "n": 34,
+      "ranges": "f0004\u2013f0006,f0008\u2013f0009,f0011\u2013f0013,f0015\u2013f0017,f0020,f0022,f0024,f0027\u2013f0028,f0059,f0062,f0067\u2013f0068,f0092\u2013f0095,f0108\u2013f0111,f0125,f0130,f0138\u2013f0139,f0144,f0146"
+    },
+    "a2d2b": {
+      "n": 39,
+      "ranges": "f0007\u2013f0008,f0010\u2013f0015,f0038\u2013f0040,f0068\u2013f0071,f0082\u2013f0083,f0088\u2013f0089,f0091,f0101\u2013f0104,f0107\u2013f0108,f0126\u2013f0129,f0143\u2013f0151"
+    }
+  },
+  "kerb10": {
+    "kitti_highway_sample": {
+      "n": 0,
+      "n_edges": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_highway_exit_approach": {
+      "n": 0,
+      "n_edges": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_highway_late": {
+      "n": 0,
+      "n_edges": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_highway_final": {
+      "n": 0,
+      "n_edges": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_city_cyclist_candidate": {
+      "n": 0,
+      "n_edges": 0,
+      "ranges": "\u2014"
+    },
+    "kitti_lane_split_candidate": {
+      "n": 15,
+      "n_edges": 15,
+      "ranges": "f0015\u2013f0029"
+    },
+    "munich": {
+      "n": 341,
+      "n_edges": 341,
+      "ranges": "f0004\u2013f0082,f0152\u2013f0188,f0252\u2013f0255,f0276\u2013f0298,f0300\u2013f0430,f0448\u2013f0470,f0482\u2013f0484,f0732\u2013f0734,f0762\u2013f0764,f0805,f0830\u2013f0832,f0866\u2013f0890,f0894\u2013f0899"
+    },
+    "a2d2a": {
+      "n": 63,
+      "n_edges": 84,
+      "ranges": "f0015,f0053\u2013f0113,f0155"
+    },
+    "a2d2b": {
+      "n": 0,
+      "n_edges": 0,
+      "ranges": "\u2014"
+    }
+  },
+  "gore10": {
+    "kitti_highway_sample": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    },
+    "kitti_highway_exit_approach": {
+      "n": 6,
+      "src": {
+        "widen": 6
+      },
+      "ranges": "f0021\u2013f0026"
+    },
+    "kitti_highway_late": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    },
+    "kitti_highway_final": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    },
+    "kitti_city_cyclist_candidate": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    },
+    "kitti_lane_split_candidate": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    },
+    "munich": {
+      "n": 11,
+      "src": {
+        "fork": 6,
+        "widen": 5
+      },
+      "ranges": "f0760\u2013f0765,f0881\u2013f0885"
+    },
+    "a2d2a": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    },
+    "a2d2b": {
+      "n": 0,
+      "src": {},
+      "ranges": "\u2014"
+    }
+  },
+  "table": [
+    {
+      "clip": "kitti_highway_sample",
+      "short": "sample",
+      "dacc": 0.0,
+      "held9": 0,
+      "held10": 0,
+      "kerb9": 0,
+      "kerb10": 0
+    },
+    {
+      "clip": "kitti_highway_exit_approach",
+      "short": "exit_approach",
+      "dacc": 0.0,
+      "held9": 0,
+      "held10": 0,
+      "kerb9": 0,
+      "kerb10": 0
+    },
+    {
+      "clip": "kitti_highway_late",
+      "short": "late",
+      "dacc": 0.0,
+      "held9": 9,
+      "held10": 9,
+      "kerb9": 0,
+      "kerb10": 0
+    },
+    {
+      "clip": "kitti_highway_final",
+      "short": "final",
+      "dacc": 0.0,
+      "held9": 0,
+      "held10": 0,
+      "kerb9": 0,
+      "kerb10": 0
+    },
+    {
+      "clip": "kitti_city_cyclist_candidate",
+      "short": "city",
+      "dacc": 0.0,
+      "held9": 2,
+      "held10": 2,
+      "kerb9": 0,
+      "kerb10": 0
+    },
+    {
+      "clip": "kitti_lane_split_candidate",
+      "short": "lane_split",
+      "dacc": 0.0,
+      "held9": 7,
+      "held10": 7,
+      "kerb9": 15,
+      "kerb10": 15
+    },
+    {
+      "clip": "munich",
+      "short": "munich",
+      "dacc": 0.0,
+      "held9": 196,
+      "held10": 189,
+      "kerb9": 276,
+      "kerb10": 341
+    },
+    {
+      "clip": "a2d2a",
+      "short": "a2d2a",
+      "dacc": 0.0,
+      "held9": 34,
+      "held10": 34,
+      "kerb9": 60,
+      "kerb10": 63
+    },
+    {
+      "clip": "a2d2b",
+      "short": "a2d2b",
+      "dacc": 0.0,
+      "held9": 39,
+      "held10": 39,
+      "kerb9": 0,
+      "kerb10": 0
+    }
+  ]
+}

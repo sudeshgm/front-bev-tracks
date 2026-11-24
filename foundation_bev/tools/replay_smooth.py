@@ -39,7 +39,7 @@ for pj in sorted(glob.glob(f"{a.src}/polylines/*_polylines.json")):
     if a.kerb:
         de = json.load(open(f"{a.ego}/polylines/{clip}_dets_ego.json"))["frames"]
         K = d["K"]; gm = BS.GroundModel(K["fx"], K["fy"], K["cx"], K["cy"], d["cam_height_m"], d["ground"]["pitch_rad"])
-        ks = LM.KerbState()
+        ks = LM.KerbState(fps=fps)
         for k, fr in enumerate(F):
             boxes = [o_["box"] for o_ in (de[k].get("objs") or []) if o_.get("cls") == "car"] if k < len(de) else []
             cars = LM.car_footprints(boxes, gm.lift)

@@ -1190,6 +1190,11 @@ def run_clip2(args):
         egp = ego_pose if LM.LINE_SMOOTH_POSE else None
         lanes_live = LM.centre_smooth_lines(lanes_live, s_ego, fps, kind="lanes", ego=egp)
         edges_live = LM.centre_smooth_lines(edges_live, s_ego, fps, kind="edges", ego=egp)
+    if stage_lines is not None:
+        # iter10: ego lane-pair width smoothing (+-1.5 s, the wobbling line absorbs it) and backfill of the lanes
+        # confirmed in the first 0.3 s into the clip start (offline, like the centred smoothing)
+        lanes_live = LM.pair_width_smooth(lanes_live, s_ego, fps)
+        lanes_live = LM.lane_backfill(lanes_live, s_ego, fps)
     if args.line_window > 1 and stage_lines is None:
         def recentre(live_list, hist):
             sm = {key: BS.centred_smooth(hh, ds_line, args.line_window) for key, hh in hist.items()}
@@ -1241,14 +1246,18 @@ def run_clip2(args):
                 outl.append({"id": int(r["id"]), "side": r.get("side"), "c": [float(v) for v in r["c"]],
                              "zmin": float(r["zmin"]), "zmax": float(r["zmax"]), "hits": int(r["hits"]),
                              "held": bool(r["held"]), "parent": r.get("parent"), "fork_z": r.get("fork_z"), "fallback": bool(r.get("fallback", False)),
-                             "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False))})
+                             "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False)),
+                             "backfill": bool(r.get("backfill", False))})
             return outl
 
         lb = [BS.sample_curve(r, 1.0, MAX_DIST) for r in lanes_live[k]]
         eb = [BS.sample_curve(r, 1.0, MAX_DIST) for r in edges_live[k]]
+        # iter10: keep records and *_bev aligned (a < 2-point polyline used to be dropped from *_bev only)
+        lrec = [r for r, p in zip(lanes_live[k], lb) if len(p) >= 2]; lb = [p for p in lb if len(p) >= 2]
+        erec = [r for r, p in zip(edges_live[k], eb) if len(p) >= 2]; eb = [p for p in eb if len(p) >= 2]
         poly_frames.append({
             "frame": k,
-            "lanes": pack_lines(lanes_live[k]), "edges": pack_lines(edges_live[k]),
+            "lanes": pack_lines(lrec), "edges": pack_lines(erec),
             "lanes_bev": [p.round(3).tolist() for p in lb if len(p) >= 2],
             "edges_bev": [p.round(3).tolist() for p in eb if len(p) >= 2],
             "lanes_px": [np.nan_to_num(gm.project(p)).round(1).tolist() for p in lb if len(p) >= 2],
@@ -1307,7 +1316,7 @@ def run_clip2(args):
     pp = Path(args.polylines_json)
     pp.parent.mkdir(parents=True, exist_ok=True)
     pp.write_text(json.dumps({
-        "clip": tag, "version": "iter9",
+        "clip": tag, "version": "iter10",
         "units": {"image": "pixels, x right, y down", "bev": "metres in current ego frame, x right, z forward",
                   "c": "x(z) = c0 + c1*z + c2*z^2 in the current ego frame"},
         "K": {"fx": fx, "fy": fy, "cx": cx, "cy": cy}, "cam_height_m": cam_h, "fps": fps, "ego_speed_mps": speed,
@@ -1317,7 +1326,7 @@ def run_clip2(args):
     }))
     n_lane_route = sum(1 for o in obs_all if len(o["lane_px"]))
     dp = Path(args.dets_json) if args.dets_json else pp.with_name(f"{tag}_dets_ego.json")
-    dp.write_text(json.dumps({"clip": tag, "version": "iter9", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
+    dp.write_text(json.dumps({"clip": tag, "version": "iter10", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
                               "ground": ground, "frames": det_dump,
                               "ego": {"selected": {k: v for k, v in ego_sel.items() if k not in ("s", "speed")},
                                       "speed_selected_mps": [round(float(v), 3) for v in ego_sel["speed"]],
@@ -1326,7 +1335,7 @@ def run_clip2(args):
                                       "scene_speed_mps": [round(float(v), 3) for v in scene["speed"]],
                                       "prior_mps": speed}}, default=float))
     rec = {
-        "rc": 0, "tag": tag, "version": "iter9", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
+        "rc": 0, "tag": tag, "version": "iter10", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
         "K": [fx, fy, cx, cy], "cam_height": cam_h, "ego_speed_mps": speed, "ground": ground,
         "n_obj_dets_npz": n_obj_dets, "n_tracks": len(tracks), "n_relink": trk.n_relink,
         "n_track_rows": len(csv_rows), "lane_gated": lt.n_gated,
