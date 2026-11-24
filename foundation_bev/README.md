@@ -1,6 +1,6 @@
 # Foundation-model BEV pipeline
 
-This directory is the foundation-model bird's-eye-view tracker. It is a separate line of work from the YOLO / TwinLiteNet pipeline on `lane-solver-fast` and `main`. The latest GPU-validated code is **iter11** (open issues are in `results/iter11/KNOWN_ISSUES.md`; iter10's false widen gore on Munich f881–885 is fixed). Earlier iteration specs are under `history/`, and small result tables are under `results/`.
+This directory is the foundation-model bird's-eye-view tracker. It is a separate line of work from the YOLO / TwinLiteNet pipeline on `lane-solver-fast` and `main`. The latest GPU-validated code is **iter12** (open issues are in `results/iter12/KNOWN_ISSUES.md`). Earlier iteration specs are under `history/`, and small result tables are under `results/`.
 
 Videos are not in this repo. They live in the private Google Drive folder [KITTI_BEV_Test_Videos](https://drive.google.com/drive/folders/1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1). Per-iteration file IDs are in `results/iterN/DRIVE_LINKS.txt`.
 
@@ -20,9 +20,9 @@ The run is two stages, then a BEV render. TwinLiteNet and YOLO are never used in
 
 The BEV overlay shows only class-coloured trajectories, lane-line curves, road-edge curves, the ego path, and gore polygons. It does not show depth maps or edge maps.
 
-## How to run iter11
+## How to run iter12
 
-Entry point: `src/run_iter11.py`. The dataset directory (`FBEV_DS`) must contain the clip MP4s, `cams.json` (intrinsics used at capture time), `motion_assumptions.json`, and this package (`src/`, `cams_iter11.json`, and optionally `yolo_baseline/`). The nine clips are `kitti_highway_sample`, `kitti_highway_exit_approach`, `kitti_highway_late`, `kitti_highway_final`, `kitti_city_cyclist_candidate`, `kitti_lane_split_candidate`, `munich`, `a2d2a`, and `a2d2b`.
+Entry point: `src/run_iter12.py`. The dataset directory (`FBEV_DS`) must contain the clip MP4s, `cams.json` (intrinsics used at capture time), `motion_assumptions.json`, and this package (`src/`, `cams_iter12.json`, and optionally `yolo_baseline/`). The nine clips are `kitti_highway_sample`, `kitti_highway_exit_approach`, `kitti_highway_late`, `kitti_highway_final`, `kitti_city_cyclist_candidate`, `kitti_lane_split_candidate`, `munich`, `a2d2a`, and `a2d2b`.
 
 Typical GPU run (one T4, about 75 minutes for stage 1 + stage 2 + the YOLO baseline):
 
@@ -33,10 +33,10 @@ export FBEV_TMP=/path/to/scratch
 # Optional YOLOPv2 baseline (measurement only):
 # export FBEV_YOLOPV2=/path/to/yolopv2.torchscript
 # export FBEV_YOLO_REPO=/path/to/sam-bev-22nov
-python src/run_iter11.py
+python src/run_iter12.py
 ```
 
-Outputs land in `FBEV_OUT`: `results/<clip>_foundation_bev_iter11.mp4`, `stills/`, `tracks/`, `polylines/`, `dets_dump/`, `metrics.md`, `ego_speed_table.md`, and `metrics_yolo_vs_run.md`.
+Outputs land in `FBEV_OUT`: `results/<clip>_foundation_bev_iter12.mp4`, `stills/`, `tracks/`, `polylines/` (with `step`, `edges_raw` and `edges_raw_held` for exact replays), `dets_dump/`, `metrics.md`, `ego_speed_table.md`, and `metrics_yolo_vs_run.md`.
 
 ### Environment variables
 
@@ -57,6 +57,10 @@ Outputs land in `FBEV_OUT`: `results/<clip>_foundation_bev_iter11.mp4`, `stills/
 | `FBEV_EDGE_DIVERGE_DEG` | `45` | Same, for heading that *diverges* away from the road (kerb flaring out at corners) |
 | `FBEV_EDGE_EGO_HALF_M` | `1.2` | Edge samples closer than this to the ego centreline are dropped |
 | `FBEV_EDGE_HOLD_S` | `0.5` | Edge hold time in seconds (5 frames at 10 Hz, 15 at 30 Hz); a held fill may only add samples |
+| `FBEV_EDGE_BACKFILL_MODE` | `hold` | iter12: clip-start edge backfill holds the first live offset (`cv`: iter11 constant velocity) |
+| `FBEV_EDGE_BACKFILL_COVER` | `1` | iter12: backfill source must reach z = 10 m; near fill of partial edges; diagonal copies rejected |
+| `FBEV_EDGE_ANCHOR_S` / `FBEV_EDGE_ANCHOR_DEV` | `3.0` / `0.15` | iter12: a missing or hold-coasted main edge is drawn as nearest lane (else opposite edge) + learned offset, for up to 3 s |
+| `FBEV_KERB_TRAFFIC` | `outer` | Kerb-rule traffic guard (`under` was tried in iter12 and rejected) |
 | `FBEV_LANE_EDGE_DUP_M` | `0.8` | Drop a lane line (not the nearest one per side) that runs within this distance of a main edge over ≥ 70 % of their common span |
 | `FBEV_FAR_MODE` | `ray` | Final smoothing pass only: range noise of far (z > 12 m, full by 18 m), off-axis (> 15°, full by 30°) cars lies along the viewing ray. `off` / `inflate` / `both` are experimental |
 | `FBEV_RAY_R` | unset (off) | Experimental ray-aligned measurement noise in the online filter too; not used in GPU runs |
@@ -89,41 +93,41 @@ Accel is RMS BEV acceleration of drawn tracks, in m/s². Lane figures are left/r
 
 ### Accel RMS (m/s²)
 
-| clip | iter2 | iter3 | iter4 | iter5 | iter6 | iter7 | iter8 | iter9 | iter10 | iter11 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| highway sample | 0.504† | 0.584† | 0.108 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 |
-| exit approach | 0.628† | 0.679† | 0.541 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 |
-| highway late | 1.697† | 1.827† | 0.651 | 0.575 | 0.575 | **0.526** | 0.534 | 0.534 | 0.534 | 0.534 |
-| highway final | 0.838† | 0.915† | 0.626 | 0.626 | 0.638 | 0.614 | **0.574** | 0.574 | 0.574 | 0.574 |
-| city cyclist | 0.474† | 0.585† | 0.566 | 0.566 | 0.566 | 0.566 | **0.548** | 0.548 | 0.548 | 0.548 |
-| lane split | 1.131† | 1.134† | 1.052 | 1.074 | **0.997** | 1.048 | **0.951** | 0.951 | 0.951 | 0.951 |
-| munich | 1.079 | 0.911 | 0.917 | 0.911 | 0.912 | **0.676** | **0.655** | 0.655 | 0.655 | 0.655 |
-| a2d2a | 1.261 | 0.820 | 0.774 | 0.791 | 0.901 | **0.775** | **0.495** | 0.495 | 0.495 | 0.495 |
-| a2d2b | 1.119 | 0.890 | 0.890 | 0.890 | **0.827** | 0.879 | **0.821** | 0.821 | 0.821 | 0.821 |
+| clip | iter2 | iter3 | iter4 | iter5 | iter6 | iter7 | iter8 | iter9 | iter10 | iter11 | iter12 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| highway sample | 0.504† | 0.584† | 0.108 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 | 0.095 |
+| exit approach | 0.628† | 0.679† | 0.541 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 | 0.546 |
+| highway late | 1.697† | 1.827† | 0.651 | 0.575 | 0.575 | **0.526** | 0.534 | 0.534 | 0.534 | 0.534 | 0.534 |
+| highway final | 0.838† | 0.915† | 0.626 | 0.626 | 0.638 | 0.614 | **0.574** | 0.574 | 0.574 | 0.574 | 0.574 |
+| city cyclist | 0.474† | 0.585† | 0.566 | 0.566 | 0.566 | 0.566 | **0.548** | 0.548 | 0.548 | 0.548 | 0.548 |
+| lane split | 1.131† | 1.134† | 1.052 | 1.074 | **0.997** | 1.048 | **0.951** | 0.951 | 0.951 | 0.951 | 0.951 |
+| munich | 1.079 | 0.911 | 0.917 | 0.911 | 0.912 | **0.676** | **0.655** | 0.655 | 0.655 | 0.655 | 0.655 |
+| a2d2a | 1.261 | 0.820 | 0.774 | 0.791 | 0.901 | **0.775** | **0.495** | 0.495 | 0.495 | 0.495 | 0.495 |
+| a2d2b | 1.119 | 0.890 | 0.890 | 0.890 | **0.827** | 0.879 | **0.821** | 0.821 | 0.821 | 0.821 | 0.821 |
 
 † KITTI scored at 4 fps (not comparable to iter4+).
 
 ### Lane presence L10 / R10 (%)
 
-| clip | iter4 | iter5 | iter6 | iter7 | iter8 | iter9 | iter10 | iter11 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| highway sample | 95 / 95 | 92.5 / 92.5 | 95 / 95 | 95 / 95 | 95 / 95 | 95 / 95 | **100 / 100** | 100 / 100 |
-| exit approach | 95 / 90 | 92.5 / 92.5 | 95 / 95 | 95 / 95 | 95 / 95 | 95 / 95 | **100 / 100** | 100 / 100 |
-| highway late | 92.5 / 95 | 87.5 / 92.5 | 92.5 / 95 | 92.5 / 95 | 92.5 / 95 | 92.5 / 95 | **97.5 / 100** | 97.5 / 100 |
-| highway final | 93.3 / 90 | 83.3 / 86.7 | 93.3 / 90 | 93.3 / 90 | 93.3 / 90 | 93.3 / 90 | 93.3 / 90 | **100 / 100** |
-| city cyclist | 93.3 / 93.3 | 90 / 90 | 93.3 / 93.3 | 93.3 / 93.3 | 93.3 / 93.3 | 93.3 / 93.3 | **100 / 100** | 100 / 100 |
-| lane split | 93.3 / 76.7 | 90 / 46.7 | 86.7 / 66.7 | **93.3 / 73.3** | 93.3 / 73.3 | 93.3 / 73.3 | **100** / 73.3 | 100 / 73.3 |
-| munich | 87.6 / 65.4 | 84.9 / 56.9 | 85.7 / 65.3 | 85.7 / 65.3 | 85.7 / 65.3 | 85.7 / 65.2 | 85.9 / 65.4 | 85.9 / 65.4 |
+| clip | iter4 | iter5 | iter6 | iter7 | iter8 | iter9 | iter10 | iter11 | iter12 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| highway sample | 95 / 95 | 92.5 / 92.5 | 95 / 95 | 95 / 95 | 95 / 95 | 95 / 95 | **100 / 100** | 100 / 100 | 100 / 100 |
+| exit approach | 95 / 90 | 92.5 / 92.5 | 95 / 95 | 95 / 95 | 95 / 95 | 95 / 95 | **100 / 100** | 100 / 100 | 100 / 100 |
+| highway late | 92.5 / 95 | 87.5 / 92.5 | 92.5 / 95 | 92.5 / 95 | 92.5 / 95 | 92.5 / 95 | **97.5 / 100** | 97.5 / 100 | 97.5 / 100 |
+| highway final | 93.3 / 90 | 83.3 / 86.7 | 93.3 / 90 | 93.3 / 90 | 93.3 / 90 | 93.3 / 90 | 93.3 / 90 | **100 / 100** | 100 / 100 |
+| city cyclist | 93.3 / 93.3 | 90 / 90 | 93.3 / 93.3 | 93.3 / 93.3 | 93.3 / 93.3 | 93.3 / 93.3 | **100 / 100** | 100 / 100 | 100 / 100 |
+| lane split | 93.3 / 76.7 | 90 / 46.7 | 86.7 / 66.7 | **93.3 / 73.3** | 93.3 / 73.3 | 93.3 / 73.3 | **100** / 73.3 | 100 / 73.3 | 100 / 73.3 |
+| munich | 87.6 / 65.4 | 84.9 / 56.9 | 85.7 / 65.3 | 85.7 / 65.3 | 85.7 / 65.3 | 85.7 / 65.2 | 85.9 / 65.4 | 85.9 / 65.4 | 85.9 / 65.4 |
 
 ### Road-edge presence L10 / R10 (%)
 
-| clip | iter5 | iter6 | iter7 | iter8 | iter9 | iter10 | iter11 |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| highway late | 95 / 87.5 | 95 / 77.5 | 95 / 87.5 | 95 / 87.5 | 95 / 87.5 | 95 / 87.5 | **100 / 100** |
-| lane split | 93.3 / 93.3 | 40 / 83.3 | 93.3 / 83.3 | **93.3 / 93.3** | 93.3 / 93.3 | 93.3 / 93.3 | **100 / 100** |
-| munich | 99.2 / 92.4 | 87.9 / 64.0 | 93.9 / 72.7 | **99.8 / 84.3** | 99.8 / 84.1 | 99.8 / **86.2** | **100** / 86.3 |
-| a2d2a | 79.7 / 77.3 | 76.2 / 71.5 | 96.5 / 94.2 | **97.1 / 94.8** | 95.3 / 94.8 | 95.9 / 94.8 | 97.7 / 94.8 |
-| a2d2b | 97.1 / 97.1 | 85.5 / 83.7 | 97.1 / 95.9 | **97.1 / 97.1** | 97.1 / 97.1 | 97.1 / 97.1 | 97.1 / **100** |
+| clip | iter5 | iter6 | iter7 | iter8 | iter9 | iter10 | iter11 | iter12 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| highway late | 95 / 87.5 | 95 / 77.5 | 95 / 87.5 | 95 / 87.5 | 95 / 87.5 | 95 / 87.5 | **100 / 100** | 100 / 100 |
+| lane split | 93.3 / 93.3 | 40 / 83.3 | 93.3 / 83.3 | **93.3 / 93.3** | 93.3 / 93.3 | 93.3 / 93.3 | **100 / 100** | 100 / 100 |
+| munich | 99.2 / 92.4 | 87.9 / 64.0 | 93.9 / 72.7 | **99.8 / 84.3** | 99.8 / 84.1 | 99.8 / **86.2** | **100** / 86.3 | 100 / **95.8** |
+| a2d2a | 79.7 / 77.3 | 76.2 / 71.5 | 96.5 / 94.2 | **97.1 / 94.8** | 95.3 / 94.8 | 95.9 / 94.8 | 97.7 / 94.8 | 97.7 / **98.8** |
+| a2d2b | 97.1 / 97.1 | 85.5 / 83.7 | 97.1 / 95.9 | **97.1 / 97.1** | 97.1 / 97.1 | 97.1 / 97.1 | 97.1 / **100** | 97.1 / 100 |
 
 Other clips are unchanged across iter5–iter10 (sample, exit approach 95 / 95; final 90 / 86.7; city 93.3 / 93.3). iter11 backfills edges at the clip start: sample, exit approach, final and city are 100 / 100.
 
@@ -164,6 +168,23 @@ iter11 Kalman-smooths the ego lane pair's width offset. Lane wjit at z = 10 m (Y
 | city cyclist | 0.004 → 0.001 (0.005) | 0.054 → 0.076 |
 | lane split | 0.131 → 0.131 (0.092) | 0.127 → 0.115 |
 
+### Edge width jitter (iter11 → iter12, m)
+
+iter12 holds the clip-start edge backfill at the first live offset instead of extrapolating its drift. Edge wjit at z = 10 m
+(live-only, i.e. without backfilled or anchored frames, in brackets: unchanged):
+
+| clip | edge wjit |
+|---|---|
+| highway sample | 0.022 → 0.019 |
+| exit approach | 0.047 → **0.042** (0.048) |
+| highway late | 0.041 → **0.034** (0.035) |
+| highway final | 0.026 → 0.022 (0.023) |
+| city cyclist | 0.076 → **0.037** (0.054) |
+| munich | 0.041 → 0.041; R10 presence 86.3 → **95.8** |
+| a2d2a | 0.065 → 0.062; R10 presence 94.8 → **98.8** |
+
+Lane wjit is unchanged (lane split 0.131 vs YOLOPv2 0.092: structural).
+
 ### What changed
 
 | iter | Highlights |
@@ -178,20 +199,21 @@ iter11 Kalman-smooths the ego lane pair's width offset. Lane wjit at z = 10 m (Y
 | 8 | Direction-aware edge trim (converging > 30°, diverging > 45°), a lane crossing invalidates the rest of the edge, ego-corridor guard, nearest run kept, 0.5 s time-based hold that may only add samples; flared edges seed no fork gore. Munich R edge 72.7 → 84.3%, lane split R 83.3 → 93.3%, A2D2b R 95.9 → 97.1%; no edge crosses a lane or enters the ego corridor. Final smoothing pass treats far, off-axis range noise as ray-aligned: A2D2a accel 0.775 → 0.495 (far car 1.84 → 0.43), lane split 1.048 → 0.951, A2D2b 0.879 → 0.821. Gores still only at exit approach f21–26 and Munich f760–765; idsw 0. |
 | 9 | Road edge moved out to the kerb behind parked-car rows (lane split f15–29, Munich, A2D2a), with a traffic-queue guard and enter/hold hysteresis. Parked cars on the right whose track drifts backward are drawn as dots (lane split f29, Munich f692); the VO-heading world pin was tried and rejected. Zero-lag centred lane / edge smoothing (±0.3 s): lane split lane L jit2 0.063 → 0.011, final 0.039 → 0.012, Munich edges 0.034/0.042 → 0.010/0.024. Polylines now carry untrimmed main edges and the ego pose. Accel, gores, held frames and idsw unchanged; lane split edge width jitter 0.107 → 0.125. |
 | 10 | Road-edge holes ≤ 5 m bridged before the trim (Munich R edge 84.1 → 86.2%; holes behind parked cars made the trim skip to the far part); flares stay trimmed. Ego lane-pair width smoothed jointly over ±1.5 s (exit wjit 0.023 → 0.017, city 0.007 → 0.004). Lanes backfilled into the first 0.3 s (sample / exit / city 100 / 100, late 97.5 / 100, lane split L 100). Kerb push blended in and out over 0.3 s (A2D2a edge wjit 0.070 → 0.065, Munich 0.043 → 0.040). Accel, idsw (0) and held frames unchanged. **Known issue: a false widen gore on Munich f881–885 (fixed in iter11);** exit f21–26 and Munich f760–765 still fire. Munich R also lost f520–526 / f557–560 at z = 10. |
+| 12 | Clip-start edge backfill holds the first live offset (city edge wjit 0.076 → 0.037, late 0.041 → 0.034) and must cover z = 10 m with no diagonal copy; edge window 1.0 s (A2D2a f0 right edge). LaneAnchor: a missing or hold-coasted main edge follows the nearest lane (else the opposite edge) at its learned offset for up to 3 s (Munich R z10 777 → 862/900, f165–166 present). Polylines carry the tracker coast flag for exact CPU replays. Gores, accel, tracks and idsw (0) unchanged. **Known issues:** the anchored Munich right edge is drawn over parked cars (f189–251), and on some frames jumps inside them; Munich f562–563 / f570–571 still absent. |
 | 11 | Munich f881–885 false widen gore removed: the kerb ramp widened the lane–edge gap gradually, so a kerb blend change now restarts the widen history (gores only exit f21–26 and Munich f760–765). Short diagonal edge fragments are vetoed before the hold, so the hold coasts (Munich R z10 776 → 777: +f520–526, f550–560, f615; −f561–577, f618). Main road edges backfilled at the clip start, and the window grew 0.3 → 0.6 s (edges 100 % on every KITTI clip; final lanes 93.3 / 90 → 100 / 100). Ego lane-pair width offset RTS-smoothed as a random walk: lane wjit exit 0.017 → 0.007, late 0.019 → 0.006, final 0.012 → 0.006, all at or below YOLOPv2. Accel, tracks and idsw (0) unchanged. Edge wjit rose on city (0.054 → 0.076) and late (0.035 → 0.041). |
 
 ## Layout
 
 ```
 foundation_bev/
-  src/run_iter11.py    # GPU entry point
+  src/run_iter12.py    # GPU entry point
   src/                 # WildDet3D infer, BEV, lines_mt, ego motion, metrics
   tests/               # pytest, including a NumPy 1.x shim
-  cams_iter11.json     # per-clip intrinsics and notes used by the runner
-  SPEC.md              # iter11 change list and GPU-run contract
-  patch.diff           # iter11 vs iter10 src
+  cams_iter12.json     # per-clip intrinsics and notes used by the runner
+  SPEC.md              # iter12 change list and GPU-run contract
+  patch.diff           # iter12 vs iter11 src
   tools/               # offline gore, edge, track, smoothing / kerb, dot-rule, lane-pair and gap replays
-  replay/              # iter11 offline replay tables (vs iter10, in-step gore replay)
+  replay/              # iter12 full post-tracker replay of the iter11 GPU run (vs iter11 and YOLOPv2), overlays
   yolo_baseline/       # optional YOLOPv2 comparison only
   history/iterN_spec/  # earlier code and markdown
   results/iterN/       # metrics tables and Drive links

@@ -1143,6 +1143,7 @@ def run_clip2(args):
     et = EdgePair(args)
     lanes_live, edges_live, raw_counts = [], [], []
     edges_raw_live = []
+    edges_raw_held_live = []  # iter12: BEV tracker coast flag of each raw main edge (replay fidelity)
     step_live = []  # iter11: in-step lanes (pre-suppression, no fallback) and split edges, for an exact gore replay
     gores_live = []
     stage_lines = LM.StageLines(fps=fps) if args.lines == "mt" else None
@@ -1173,6 +1174,7 @@ def run_clip2(args):
             lz, ez, gz = stage_lines.step(k, road_bev, paint_bev > 0, bev_valid, IP.RES,
                                           ds=float(s_ego[k] - s_ego[k - 1]) if k else 0.0, cars=cars_k)
             edges_raw_live.append({r_: np.where(np.isfinite(x_), x_, np.nan) for r_, x_ in stage_lines.last_raw.items()})
+            edges_raw_held_live.append(dict(getattr(stage_lines, "last_raw_held", {})))
             step_live.append({"lanes": [{"id": int(r_["id"]), "side": int(r_["side"]), "parent": r_.get("parent"),
                                          "fork_z": r_.get("fork_z"), "hits": int(r_["hits"]), "held": bool(r_["held"]),
                                          "x": _pack_x(r_["xg"])} for r_ in lz],
@@ -1262,7 +1264,7 @@ def run_clip2(args):
                              "held": bool(r["held"]), "parent": r.get("parent"), "fork_z": r.get("fork_z"), "fallback": bool(r.get("fallback", False)),
                              "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False)),
                              "backfill": bool(r.get("backfill", False)), "kerb_alpha": round(float(r.get("kerb_alpha", 0.0)), 3),
-                             "frag": bool(r.get("frag_override", False))})
+                             "frag": bool(r.get("frag_override", False)), "anchored": bool(r.get("anchored", False))})
             return outl
 
         lb = [BS.sample_curve(r, 1.0, MAX_DIST) for r in lanes_live[k]]
@@ -1281,6 +1283,7 @@ def run_clip2(args):
             # iter9: main edges before trim/hold/kerb (diagnosis), and the ego pose used for world-frame pinning
             "edges_raw": {r_: [[round(float(x_), 3), float(z_)] for x_, z_ in zip(xr_, LM.ZS) if np.isfinite(x_)]
                           for r_, xr_ in (edges_raw_live[k].items() if k < len(edges_raw_live) else [])},
+            "edges_raw_held": edges_raw_held_live[k] if k < len(edges_raw_held_live) else {},
             "step": step_live[k] if k < len(step_live) else None,
             "ego": {"x": round(float(ego_pose["x"][k]), 3), "z": round(float(ego_pose["z"][k]), 3),
                     "psi": round(float(ego_pose["psi"][k]), 5)} if k < len(ego_pose["psi"]) else None,
@@ -1332,7 +1335,7 @@ def run_clip2(args):
     pp = Path(args.polylines_json)
     pp.parent.mkdir(parents=True, exist_ok=True)
     pp.write_text(json.dumps({
-        "clip": tag, "version": "iter11",
+        "clip": tag, "version": "iter12",
         "units": {"image": "pixels, x right, y down", "bev": "metres in current ego frame, x right, z forward",
                   "c": "x(z) = c0 + c1*z + c2*z^2 in the current ego frame"},
         "K": {"fx": fx, "fy": fy, "cx": cx, "cy": cy}, "cam_height_m": cam_h, "fps": fps, "ego_speed_mps": speed,
@@ -1342,7 +1345,7 @@ def run_clip2(args):
     }))
     n_lane_route = sum(1 for o in obs_all if len(o["lane_px"]))
     dp = Path(args.dets_json) if args.dets_json else pp.with_name(f"{tag}_dets_ego.json")
-    dp.write_text(json.dumps({"clip": tag, "version": "iter11", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
+    dp.write_text(json.dumps({"clip": tag, "version": "iter12", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
                               "ground": ground, "frames": det_dump,
                               "ego": {"selected": {k: v for k, v in ego_sel.items() if k not in ("s", "speed")},
                                       "speed_selected_mps": [round(float(v), 3) for v in ego_sel["speed"]],
@@ -1351,7 +1354,7 @@ def run_clip2(args):
                                       "scene_speed_mps": [round(float(v), 3) for v in scene["speed"]],
                                       "prior_mps": speed}}, default=float))
     rec = {
-        "rc": 0, "tag": tag, "version": "iter11", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
+        "rc": 0, "tag": tag, "version": "iter12", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
         "K": [fx, fy, cx, cy], "cam_height": cam_h, "ego_speed_mps": speed, "ground": ground,
         "n_obj_dets_npz": n_obj_dets, "n_tracks": len(tracks), "n_relink": trk.n_relink,
         "n_track_rows": len(csv_rows), "lane_gated": lt.n_gated,

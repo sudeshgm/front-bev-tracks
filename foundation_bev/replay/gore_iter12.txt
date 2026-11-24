@@ -1,0 +1,9 @@
+kitti_highway_sample: gores replay [] gpu [] kerb 0 held 0
+kitti_highway_exit_approach: gores replay [21, 22, 23, 24, 25, 26] gpu [21, 22, 23, 24, 25, 26] kerb 0 held 0
+kitti_highway_late: gores replay [] gpu [] kerb 0 held 0
+kitti_highway_final: gores replay [] gpu [] kerb 0 held 0
+kitti_city_cyclist_candidate: gores replay [] gpu [] kerb 0 held 0
+kitti_lane_split_candidate: gores replay [] gpu [] kerb 15 held 3
+munich: gores replay [760, 761, 762, 763, 764, 765] gpu [760, 761, 762, 763, 764, 765] kerb 340 held 168
+a2d2a: gores replay [] gpu [] kerb 63 held 5
+a2d2b: gores replay [] gpu [] kerb 0 held 16
