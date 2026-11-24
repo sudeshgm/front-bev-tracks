@@ -1,0 +1,902 @@
+{
+ "a2d2a": {
+  "lanes_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": null,
+   "iter10_replay": null,
+   "iter11_replay": null,
+   "d": null
+  },
+  "lanes_12_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.015,
+   "iter10_replay": 0.015,
+   "iter11_replay": 0.015,
+   "d": 0.0
+  },
+  "lanes_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.008,
+   "iter10_replay": 0.008,
+   "iter11_replay": 0.008,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.007,
+   "iter10_replay": 0.007,
+   "iter11_replay": 0.007,
+   "d": 0.0
+  },
+  "lanes_L10_pres": {
+   "yolo": null,
+   "iter10_gpu": 15.1,
+   "iter10_replay": 15.1,
+   "iter11_replay": 15.1,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": null,
+   "iter10_gpu": 26.7,
+   "iter10_replay": 26.7,
+   "iter11_replay": 26.7,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.065,
+   "iter10_replay": 0.067,
+   "iter11_replay": 0.067,
+   "d": 0.0
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.036,
+   "iter10_replay": 0.036,
+   "iter11_replay": 0.035,
+   "d": -0.001
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.03,
+   "iter10_replay": 0.03,
+   "iter11_replay": 0.03,
+   "d": 0.0
+  },
+  "edges_L10_pres": {
+   "yolo": null,
+   "iter10_gpu": 95.9,
+   "iter10_replay": 95.9,
+   "iter11_replay": 97.7,
+   "d": 1.8
+  },
+  "edges_R10_pres": {
+   "yolo": null,
+   "iter10_gpu": 94.8,
+   "iter10_replay": 94.8,
+   "iter11_replay": 94.8,
+   "d": 0.0
+  },
+  "accel_rms_mps2": {
+   "yolo": null,
+   "iter10_gpu": 0.495,
+   "iter10_replay": 0.495,
+   "iter11_replay": 0.495,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": null,
+   "iter10_gpu": 23,
+   "iter10_replay": 23,
+   "iter11_replay": 23,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": null,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "a2d2b": {
+  "lanes_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": null,
+   "iter10_replay": null,
+   "iter11_replay": null,
+   "d": null
+  },
+  "lanes_12_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.046,
+   "iter10_replay": 0.046,
+   "iter11_replay": 0.046,
+   "d": 0.0
+  },
+  "lanes_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.012,
+   "iter10_replay": 0.012,
+   "iter11_replay": 0.012,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.035,
+   "iter10_replay": 0.035,
+   "iter11_replay": 0.035,
+   "d": 0.0
+  },
+  "lanes_L10_pres": {
+   "yolo": null,
+   "iter10_gpu": 8.1,
+   "iter10_replay": 8.1,
+   "iter11_replay": 8.1,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": null,
+   "iter10_gpu": 2.3,
+   "iter10_replay": 2.3,
+   "iter11_replay": 2.3,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.057,
+   "iter10_replay": 0.057,
+   "iter11_replay": 0.057,
+   "d": 0.0
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.038,
+   "iter10_replay": 0.038,
+   "iter11_replay": 0.038,
+   "d": 0.0
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.032,
+   "iter10_replay": 0.032,
+   "iter11_replay": 0.032,
+   "d": 0.0
+  },
+  "edges_L10_pres": {
+   "yolo": null,
+   "iter10_gpu": 97.1,
+   "iter10_replay": 97.1,
+   "iter11_replay": 97.1,
+   "d": 0.0
+  },
+  "edges_R10_pres": {
+   "yolo": null,
+   "iter10_gpu": 97.1,
+   "iter10_replay": 97.1,
+   "iter11_replay": 100.0,
+   "d": 2.9
+  },
+  "accel_rms_mps2": {
+   "yolo": null,
+   "iter10_gpu": 0.821,
+   "iter10_replay": 0.821,
+   "iter11_replay": 0.821,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": null,
+   "iter10_gpu": 11,
+   "iter10_replay": 11,
+   "iter11_replay": 11,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": null,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "kitti_city_cyclist_candidate": {
+  "lanes_10_wjit": {
+   "yolo": 0.005,
+   "iter10_gpu": 0.004,
+   "iter10_replay": 0.004,
+   "iter11_replay": 0.001,
+   "d": -0.003
+  },
+  "lanes_12_wjit": {
+   "yolo": 0.004,
+   "iter10_gpu": 0.002,
+   "iter10_replay": 0.002,
+   "iter11_replay": 0.002,
+   "d": 0.0
+  },
+  "lanes_L10_jit2": {
+   "yolo": 0.001,
+   "iter10_gpu": 0.002,
+   "iter10_replay": 0.002,
+   "iter11_replay": 0.002,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": 0.004,
+   "iter10_gpu": 0.003,
+   "iter10_replay": 0.003,
+   "iter11_replay": 0.001,
+   "d": -0.002
+  },
+  "lanes_L10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.054,
+   "iter10_replay": 0.054,
+   "iter11_replay": 0.076,
+   "d": 0.022
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.021,
+   "iter10_replay": 0.021,
+   "iter11_replay": 0.019,
+   "d": -0.002
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.01,
+   "iter10_replay": 0.01,
+   "iter11_replay": 0.01,
+   "d": 0.0
+  },
+  "edges_L10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 93.3,
+   "iter10_replay": 93.3,
+   "iter11_replay": 100.0,
+   "d": 6.7
+  },
+  "edges_R10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 93.3,
+   "iter10_replay": 93.3,
+   "iter11_replay": 100.0,
+   "d": 6.7
+  },
+  "accel_rms_mps2": {
+   "yolo": 0.491,
+   "iter10_gpu": 0.548,
+   "iter10_replay": 0.548,
+   "iter11_replay": 0.548,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": 3,
+   "iter10_gpu": 5,
+   "iter10_replay": 5,
+   "iter11_replay": 5,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": 0.0,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "kitti_highway_exit_approach": {
+  "lanes_10_wjit": {
+   "yolo": 0.007,
+   "iter10_gpu": 0.017,
+   "iter10_replay": 0.017,
+   "iter11_replay": 0.007,
+   "d": -0.01
+  },
+  "lanes_12_wjit": {
+   "yolo": 0.01,
+   "iter10_gpu": 0.016,
+   "iter10_replay": 0.016,
+   "iter11_replay": 0.007,
+   "d": -0.009
+  },
+  "lanes_L10_jit2": {
+   "yolo": 0.013,
+   "iter10_gpu": 0.005,
+   "iter10_replay": 0.005,
+   "iter11_replay": 0.004,
+   "d": -0.001
+  },
+  "lanes_R10_jit2": {
+   "yolo": 0.009,
+   "iter10_gpu": 0.014,
+   "iter10_replay": 0.014,
+   "iter11_replay": 0.008,
+   "d": -0.006
+  },
+  "lanes_L10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.048,
+   "iter10_replay": 0.048,
+   "iter11_replay": 0.047,
+   "d": -0.001
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.016,
+   "iter10_replay": 0.016,
+   "iter11_replay": 0.016,
+   "d": 0.0
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.024,
+   "iter10_replay": 0.024,
+   "iter11_replay": 0.023,
+   "d": -0.001
+  },
+  "edges_L10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 95.0,
+   "iter10_replay": 95.0,
+   "iter11_replay": 100.0,
+   "d": 5.0
+  },
+  "edges_R10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 95.0,
+   "iter10_replay": 95.0,
+   "iter11_replay": 100.0,
+   "d": 5.0
+  },
+  "accel_rms_mps2": {
+   "yolo": null,
+   "iter10_gpu": 0.546,
+   "iter10_replay": 0.546,
+   "iter11_replay": 0.546,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": 0,
+   "iter10_gpu": 2,
+   "iter10_replay": 2,
+   "iter11_replay": 2,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": null,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "kitti_highway_final": {
+  "lanes_10_wjit": {
+   "yolo": 0.008,
+   "iter10_gpu": 0.012,
+   "iter10_replay": 0.012,
+   "iter11_replay": 0.006,
+   "d": -0.006
+  },
+  "lanes_12_wjit": {
+   "yolo": 0.012,
+   "iter10_gpu": 0.02,
+   "iter10_replay": 0.02,
+   "iter11_replay": 0.011,
+   "d": -0.009
+  },
+  "lanes_L10_jit2": {
+   "yolo": 0.024,
+   "iter10_gpu": 0.016,
+   "iter10_replay": 0.015,
+   "iter11_replay": 0.011,
+   "d": -0.004
+  },
+  "lanes_R10_jit2": {
+   "yolo": 0.017,
+   "iter10_gpu": 0.004,
+   "iter10_replay": 0.004,
+   "iter11_replay": 0.004,
+   "d": 0.0
+  },
+  "lanes_L10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 93.3,
+   "iter10_replay": 93.3,
+   "iter11_replay": 100.0,
+   "d": 6.7
+  },
+  "lanes_R10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 90.0,
+   "iter10_replay": 90.0,
+   "iter11_replay": 100.0,
+   "d": 10.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.023,
+   "iter10_replay": 0.023,
+   "iter11_replay": 0.026,
+   "d": 0.003
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.029,
+   "iter10_replay": 0.029,
+   "iter11_replay": 0.029,
+   "d": 0.0
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.025,
+   "iter10_replay": 0.025,
+   "iter11_replay": 0.022,
+   "d": -0.003
+  },
+  "edges_L10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 90.0,
+   "iter10_replay": 90.0,
+   "iter11_replay": 100.0,
+   "d": 10.0
+  },
+  "edges_R10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 86.7,
+   "iter10_replay": 86.7,
+   "iter11_replay": 100.0,
+   "d": 13.3
+  },
+  "accel_rms_mps2": {
+   "yolo": 0.755,
+   "iter10_gpu": 0.574,
+   "iter10_replay": 0.574,
+   "iter11_replay": 0.574,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": 3,
+   "iter10_gpu": 3,
+   "iter10_replay": 3,
+   "iter11_replay": 3,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": 0.0,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "kitti_highway_late": {
+  "lanes_10_wjit": {
+   "yolo": 0.009,
+   "iter10_gpu": 0.019,
+   "iter10_replay": 0.019,
+   "iter11_replay": 0.006,
+   "d": -0.013
+  },
+  "lanes_12_wjit": {
+   "yolo": 0.01,
+   "iter10_gpu": 0.018,
+   "iter10_replay": 0.018,
+   "iter11_replay": 0.007,
+   "d": -0.011
+  },
+  "lanes_L10_jit2": {
+   "yolo": 0.014,
+   "iter10_gpu": 0.011,
+   "iter10_replay": 0.011,
+   "iter11_replay": 0.011,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": 0.014,
+   "iter10_gpu": 0.007,
+   "iter10_replay": 0.007,
+   "iter11_replay": 0.011,
+   "d": 0.004
+  },
+  "lanes_L10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 97.5,
+   "iter10_replay": 97.5,
+   "iter11_replay": 97.5,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.035,
+   "iter10_replay": 0.035,
+   "iter11_replay": 0.041,
+   "d": 0.006
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.02,
+   "iter10_replay": 0.02,
+   "iter11_replay": 0.019,
+   "d": -0.001
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.015,
+   "iter10_replay": 0.015,
+   "iter11_replay": 0.014,
+   "d": -0.001
+  },
+  "edges_L10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 95.0,
+   "iter10_replay": 95.0,
+   "iter11_replay": 100.0,
+   "d": 5.0
+  },
+  "edges_R10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 87.5,
+   "iter10_replay": 87.5,
+   "iter11_replay": 100.0,
+   "d": 12.5
+  },
+  "accel_rms_mps2": {
+   "yolo": 0.495,
+   "iter10_gpu": 0.534,
+   "iter10_replay": 0.534,
+   "iter11_replay": 0.534,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": 4,
+   "iter10_gpu": 5,
+   "iter10_replay": 5,
+   "iter11_replay": 5,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": 0.0,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "kitti_highway_sample": {
+  "lanes_10_wjit": {
+   "yolo": 0.006,
+   "iter10_gpu": 0.004,
+   "iter10_replay": 0.004,
+   "iter11_replay": 0.002,
+   "d": -0.002
+  },
+  "lanes_12_wjit": {
+   "yolo": 0.006,
+   "iter10_gpu": 0.003,
+   "iter10_replay": 0.004,
+   "iter11_replay": 0.002,
+   "d": -0.002
+  },
+  "lanes_L10_jit2": {
+   "yolo": 0.019,
+   "iter10_gpu": 0.004,
+   "iter10_replay": 0.003,
+   "iter11_replay": 0.003,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": 0.005,
+   "iter10_gpu": 0.003,
+   "iter10_replay": 0.004,
+   "iter11_replay": 0.004,
+   "d": 0.0
+  },
+  "lanes_L10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": 100.0,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.019,
+   "iter10_replay": 0.021,
+   "iter11_replay": 0.022,
+   "d": 0.001
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.02,
+   "iter10_replay": 0.018,
+   "iter11_replay": 0.017,
+   "d": -0.001
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.009,
+   "iter10_replay": 0.01,
+   "iter11_replay": 0.01,
+   "d": 0.0
+  },
+  "edges_L10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 95.0,
+   "iter10_replay": 95.0,
+   "iter11_replay": 100.0,
+   "d": 5.0
+  },
+  "edges_R10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 95.0,
+   "iter10_replay": 95.0,
+   "iter11_replay": 100.0,
+   "d": 5.0
+  },
+  "accel_rms_mps2": {
+   "yolo": null,
+   "iter10_gpu": 0.095,
+   "iter10_replay": 0.095,
+   "iter11_replay": 0.095,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": 0,
+   "iter10_gpu": 1,
+   "iter10_replay": 1,
+   "iter11_replay": 1,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": null,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "kitti_lane_split_candidate": {
+  "lanes_10_wjit": {
+   "yolo": 0.092,
+   "iter10_gpu": 0.131,
+   "iter10_replay": 0.133,
+   "iter11_replay": 0.133,
+   "d": 0.0
+  },
+  "lanes_12_wjit": {
+   "yolo": 0.219,
+   "iter10_gpu": 0.082,
+   "iter10_replay": 0.08,
+   "iter11_replay": 0.08,
+   "d": 0.0
+  },
+  "lanes_L10_jit2": {
+   "yolo": 0.257,
+   "iter10_gpu": 0.011,
+   "iter10_replay": 0.012,
+   "iter11_replay": 0.012,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": 0.721,
+   "iter10_gpu": 0.022,
+   "iter10_replay": 0.012,
+   "iter11_replay": 0.012,
+   "d": 0.0
+  },
+  "lanes_L10_pres": {
+   "yolo": 76.7,
+   "iter10_gpu": 100.0,
+   "iter10_replay": 100.0,
+   "iter11_replay": 100.0,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": 26.7,
+   "iter10_gpu": 73.3,
+   "iter10_replay": 73.3,
+   "iter11_replay": 73.3,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.127,
+   "iter10_replay": 0.129,
+   "iter11_replay": 0.127,
+   "d": -0.002
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.042,
+   "iter10_replay": 0.042,
+   "iter11_replay": 0.042,
+   "d": 0.0
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.042,
+   "iter10_replay": 0.031,
+   "iter11_replay": 0.031,
+   "d": 0.0
+  },
+  "edges_L10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 93.3,
+   "iter10_replay": 93.3,
+   "iter11_replay": 100.0,
+   "d": 6.7
+  },
+  "edges_R10_pres": {
+   "yolo": 0.0,
+   "iter10_gpu": 93.3,
+   "iter10_replay": 93.3,
+   "iter11_replay": 100.0,
+   "d": 6.7
+  },
+  "accel_rms_mps2": {
+   "yolo": 0.615,
+   "iter10_gpu": 0.951,
+   "iter10_replay": 0.951,
+   "iter11_replay": 0.951,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": 10,
+   "iter10_gpu": 13,
+   "iter10_replay": 13,
+   "iter11_replay": 13,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": 0.0,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ },
+ "munich": {
+  "lanes_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.006,
+   "iter10_replay": 0.006,
+   "iter11_replay": 0.006,
+   "d": 0.0
+  },
+  "lanes_12_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.006,
+   "iter10_replay": 0.006,
+   "iter11_replay": 0.006,
+   "d": 0.0
+  },
+  "lanes_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.003,
+   "iter10_replay": 0.003,
+   "iter11_replay": 0.003,
+   "d": 0.0
+  },
+  "lanes_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.002,
+   "iter10_replay": 0.002,
+   "iter11_replay": 0.002,
+   "d": 0.0
+  },
+  "lanes_L10_pres": {
+   "yolo": null,
+   "iter10_gpu": 85.9,
+   "iter10_replay": 85.9,
+   "iter11_replay": 85.9,
+   "d": 0.0
+  },
+  "lanes_R10_pres": {
+   "yolo": null,
+   "iter10_gpu": 65.4,
+   "iter10_replay": 65.4,
+   "iter11_replay": 65.4,
+   "d": 0.0
+  },
+  "edges_10_wjit": {
+   "yolo": null,
+   "iter10_gpu": 0.04,
+   "iter10_replay": 0.04,
+   "iter11_replay": 0.042,
+   "d": 0.002
+  },
+  "edges_L10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.01,
+   "iter10_replay": 0.01,
+   "iter11_replay": 0.01,
+   "d": 0.0
+  },
+  "edges_R10_jit2": {
+   "yolo": null,
+   "iter10_gpu": 0.022,
+   "iter10_replay": 0.021,
+   "iter11_replay": 0.021,
+   "d": 0.0
+  },
+  "edges_L10_pres": {
+   "yolo": null,
+   "iter10_gpu": 99.8,
+   "iter10_replay": 99.8,
+   "iter11_replay": 100.0,
+   "d": 0.2
+  },
+  "edges_R10_pres": {
+   "yolo": null,
+   "iter10_gpu": 86.2,
+   "iter10_replay": 86.4,
+   "iter11_replay": 87.9,
+   "d": 1.5
+  },
+  "accel_rms_mps2": {
+   "yolo": null,
+   "iter10_gpu": 0.655,
+   "iter10_replay": 0.655,
+   "iter11_replay": 0.655,
+   "d": 0.0
+  },
+  "n_tracks": {
+   "yolo": null,
+   "iter10_gpu": 87,
+   "iter10_replay": 87,
+   "iter11_replay": 87,
+   "d": 0
+  },
+  "id_switch_proxy_per100f": {
+   "yolo": null,
+   "iter10_gpu": 0.0,
+   "iter10_replay": 0.0,
+   "iter11_replay": 0.0,
+   "d": 0.0
+  }
+ }
+}

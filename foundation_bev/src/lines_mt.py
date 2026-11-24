@@ -714,6 +714,54 @@ def suppress_edge_duplicates(lanes, edges, d_max=None, frac=0.7, min_n=12):
     return keep
 
 
+EDGE_FRAG_M = float(os.environ.get("FBEV_EDGE_FRAG_M", "6.0"))  # iter11: a live edge shorter than this is a fragment
+EDGE_FRAG_EXT_M = float(os.environ.get("FBEV_EDGE_FRAG_EXT_M", "12.0"))  # iter11: max near extension of a fragment
+EDGE_FRAG_DEV = float(os.environ.get("FBEV_EDGE_FRAG_DEV", "0.25"))     # iter11: fragment slope vs lane heading veto
+
+
+def is_diag_fragment(e, lanes, z_near=10.0, max_dev=None):
+    """iter11 (GPU iter10 munich R f520-526: z 20.5-24.5 m, slope 0.37; f557-560: z 11.5-17 m, slope 0.94; lane
+    heading 0.03-0.07): gap bridging + trim left a short diagonal piece of the image-border / forecourt hook as the
+    live main edge, which replaced the held line iter9 coasted. A live main edge shorter than EDGE_FRAG_M that starts
+    beyond z_near and deviates from the lane heading by > max_dev is not a kerb: drop it for this frame."""
+    max_dev = EDGE_FRAG_DEV if max_dev is None else max_dev
+    if EDGE_FRAG_M <= 0 or e is None or e.get("held") or e.get("kerb_occ"):
+        return False
+    x = np.asarray(e["xg"], float); f = np.isfinite(x)
+    if f.sum() < 4 or np.ptp(ZS[f]) >= EDGE_FRAG_M or ZS[f].min() <= z_near:
+        return False
+    return abs(float(np.polyfit(ZS[f], x[f], 1)[0]) - _ref_slope(None, lanes)) > max_dev
+
+
+def frag_extend(h, side, lanes, z_near=10.0):
+    """iter11 (GPU iter10 munich R f520-526, f557-560): gap bridging turned a fully-trimmed frame (iter9: no live
+    edge -> the hold coasted the whole line) into a short far fragment (z 12-25 m) that replaced the held line.
+    At z = 10 m these kerbs are at or beyond the right image border (munich: u >= 1220 of 1280), so iter9's 'presence'
+    was a coasted hook (x10 4.6 -> 6.8 m in 7 frames). Instead of the hook, a fragment (span < EDGE_FRAG_M, not
+    reaching z_near, starting by z_near + EDGE_FRAG_EXT_M) that itself runs along the road heading (|slope - lane
+    heading| <= 0.15) is extended to z_near along that heading, like the clip-start lane backfill; the extension
+    must pass trim_edge (no lane crossing / ego corridor)."""
+    if EDGE_FRAG_M <= 0 or h is None or h.get("held"):
+        return h
+    cx = np.asarray(h["xg"], float)
+    f = np.isfinite(cx)
+    if f.sum() < 4 or np.ptp(ZS[f]) >= EDGE_FRAG_M or ZS[f].min() <= z_near or ZS[f].min() > z_near + EDGE_FRAG_EXT_M:
+        return h
+    ref = _ref_slope(None, lanes)
+    sl = float(np.polyfit(ZS[f], cx[f], 1)[0])
+    if abs(sl - ref) > 0.15:
+        return h
+    z0 = ZS[f].min(); x0 = float(np.median(cx[f][:3]))
+    m = (ZS >= z_near) & (ZS < z0)
+    xo = cx.copy(); xo[m] = x0 + ref * (ZS[m] - z0)
+    xt = trim_edge(xo, side, lanes)
+    i0 = int(np.argmin(np.abs(ZS - z_near)))
+    if xt is None or not np.isfinite(xt[i0]) or (f & ~np.isfinite(xt)).any():
+        return h
+    fz = ZS[np.isfinite(xt)]
+    return dict(h, xg=xt, zmin=float(fz.min()), zmax=float(fz.max()), held=False, frag_override=True)
+
+
 def retrim_held(h, cur, side, lanes):
     """iter8: held / filled geometry must pass trim_edge too, and a fill may only ADD samples: if re-trimming the
     filled edge loses any sample the current (trimmed) edge measured, the current edge is used unfilled
@@ -788,6 +836,9 @@ class EdgeHold:
         return out
 
 
+GORE_KERB_RESET = os.environ.get("FBEV_GORE_KERB_RESET", "1") == "1"  # iter11
+
+
 class DivergenceGore:
     """iter6: persistent divergence gores. A candidate (per-frame fork_gores wedge, or a TEMPORAL widening of the
     gap between the outermost lane line and that side's main edge) must persist >= n_persist consecutive frames
@@ -798,6 +849,7 @@ class DivergenceGore:
         self.n_persist, self.grow_m, self.hist, self.max_step = n_persist, grow_m, hist, max_step
         self.run = {}      # key -> consecutive frames
         self.gaps = {-1: [], 1: []}
+        self.kalpha = {-1: 0.0, 1: 0.0}
 
     def step(self, lanes, edges):
         cands = {}
@@ -824,6 +876,15 @@ class DivergenceGore:
             H = (self.gaps[sd] + [gm])[-self.hist:]
             if len(H) >= 2 and abs(H[-1] - H[-2]) > self.max_step:
                 H = [gm]  # a jump (lane change, edge flip) restarts the history: growth must be gradual
+            # iter11 (GPU iter10 munich f881-885 false widen gore): the iter10 kerb blend moves the main edge outward
+            # by up to KERB_MAX_PUSH_M in 1 / ramp_n steps (0.25-0.37 m / frame on munich, under max_step), so a kerb
+            # re-interpretation looked like a gradually opening exit lane. The iter9 switch jumped and restarted the
+            # history. A change of the kerb blend weight restarts the history too: the edge's model changed, the
+            # road did not.
+            ka = float(e.get("kerb_alpha", 1.0 if e.get("kerb_occ") else 0.0))
+            if GORE_KERB_RESET and abs(ka - self.kalpha.get(sd, 0.0)) > 1e-6:
+                H = [gm]
+            self.kalpha[sd] = ka
             self.gaps[sd] = H
             base = min(H)
             steps = np.diff(H[-4:]) if len(H) >= 4 else np.array([np.inf])
@@ -960,6 +1021,17 @@ class StageLines:
             for r in got:
                 side = -1 if role == "main_L" else (1 if role == "main_R" else None)
                 edges.append(_legacy(r, side=side, kind="edge", extra={"role": role, "split": role.startswith("split")}))
+        edges, fg = self.post_edges(lanes, edges, cars, ds)
+        # iter5: stripe gores need >= 3 stripes and a compact hull; plus fork gores (child diverging from parent
+        # lane / split edge diverging from main edge with a growing gap)
+        sg = [g for g in gore_polygons(stripes, min_stripes=3) if g["area"] <= 40.0]
+        gores = [{"poly": np.asarray(g["poly"], float).tolist(), "n_stripes": int(g.get("n_stripes", 0)),
+                  "src": g.get("src", "stripes")} for g in self.gore.step(sg + fg)]
+        return lanes, edges, gores
+
+    def post_edges(self, lanes, edges, cars=None, ds=0.0):
+        """iter11: the part of step() after the edge trackers (kerb -> hold -> retrim -> flare -> divergence gores),
+        split out so tools/replay_gore.py replays exactly this code on a GPU run's edges_raw dump."""
         if KERB_CARS:  # iter9: main edge along a parked-car row -> kerb behind the cars (with hysteresis)
             mains = {e.get("role"): e for e in edges if e.get("role") in ("main_L", "main_R")}
             for role, sd in (("main_L", -1), ("main_R", 1)):
@@ -971,25 +1043,25 @@ class StageLines:
                 if app:
                     fk = np.isfinite(xk)
                     c2 = np.polyfit(ZS[fk], xk[fk], 2 if np.ptp(ZS[fk]) > 12 else 1)[::-1]
-                    e2 = dict(e, xg=xk, kerb_occ=True, c=np.concatenate([c2, np.zeros(3 - len(c2))]))
+                    e2 = dict(e, xg=xk, kerb_occ=True, c=np.concatenate([c2, np.zeros(3 - len(c2))]),
+                              kerb_alpha=float(self.kerb.alpha.get(role, 1.0)) if self.kerb.ramp_n > 1 else 1.0)
                     edges[edges.index(e)] = e2
         for role, sd in (("main_L", -1), ("main_R", 1)):  # iter7 temporal hold (+ fill of trimmed samples)
             cur = [e for e in edges if e.get("role") == role]
+            if cur and is_diag_fragment(cur[0], lanes):  # iter11: a diagonal fragment is no edge -> the hold coasts
+                edges.remove(cur[0]); cur = []
+                self.n_frag_veto = getattr(self, "n_frag_veto", 0) + 1
             h = self.hold.step(role, cur[0] if cur else None, ds)
             h = retrim_held(h, cur[0] if cur else None, sd, lanes)
+            h = frag_extend(h, sd, lanes)  # iter11
             if h is not None:
                 h["flare"] = is_flared(h.get("xg"), sd, lanes)
             if cur:
                 edges[edges.index(cur[0])] = h
             elif h is not None:
                 edges.append(h)
-        # iter5: stripe gores need >= 3 stripes and a compact hull; plus fork gores (child diverging from parent
-        # lane / split edge diverging from main edge with a growing gap)
-        sg = [g for g in gore_polygons(stripes, min_stripes=3) if g["area"] <= 40.0]
         fg = self.div.step(lanes, edges)
-        gores = [{"poly": np.asarray(g["poly"], float).tolist(), "n_stripes": int(g.get("n_stripes", 0)),
-                  "src": g.get("src", "stripes")} for g in self.gore.step(sg + fg)]
-        return lanes, edges, gores
+        return edges, fg
 
     def events(self):
         return self.lanes.events + [e for t in self.edges.values() for e in t.events]
@@ -1075,9 +1147,58 @@ def centre_smooth_lines(frames, s, fps, half_s=None, kind="lanes", ego=None):
 PAIR_W_S = float(os.environ.get("FBEV_PAIR_W_S", "1.5"))          # ego lane-pair width window (+- s); 0 = off
 PAIR_W_MAXDEV = float(os.environ.get("FBEV_PAIR_W_MAXDEV", "0.5"))  # leave samples whose width moves more alone
 PAIR_W_SPLIT = os.environ.get("FBEV_PAIR_W_SPLIT", "resid")         # resid | half: who absorbs the width change
-PAIR_W_MODE = os.environ.get("FBEV_PAIR_W_MODE", "tri")          # tri | auto | mean | median; the constant-width priors cut lane_split wjit 0.136 -> 0.06 but cost the final lane change (0.013 -> 0.018)
+PAIR_W_MODE = os.environ.get("FBEV_PAIR_W_MODE", "kf")          # tri | auto | mean | median; the constant-width priors cut lane_split wjit 0.136 -> 0.06 but cost the final lane change (0.013 -> 0.018)
 PAIR_W_TREND_M = float(os.environ.get("FBEV_PAIR_W_TREND_M", "0.3"))  # auto: run width trend above this -> tri
-LANE_BACKFILL_S = float(os.environ.get("FBEV_LANE_BACKFILL_S", "0.3"))  # backfill confirmed lanes into the clip start
+LANE_BACKFILL_S = float(os.environ.get("FBEV_LANE_BACKFILL_S", "0.6"))  # backfill confirmed lanes into the clip start
+# iter11: 0.3 -> 0.6 s (GPU iter10 final: the ego-right lane is confirmed at f5, 0.5 s); main road edges too (edge tracker
+# n_birth 3: exit / sample / city / lane_split / munich edges start at f2, final R f4, late R f5)
+EDGE_BACKFILL_S = float(os.environ.get("FBEV_EDGE_BACKFILL_S", str(LANE_BACKFILL_S)))
+EDGE_BACKFILL_CV = os.environ.get("FBEV_EDGE_BACKFILL_CV", "1") == "1"
+# iter11 'kf' mode: the ego pair's width offset at z_ref as a slow random walk (or a local linear trend: width + rate),
+# RTS-smoothed per pair run >= PAIR_KF_MIN_S. PAIR_KF_Q: process noise (rw: m/sqrt(s)), PAIR_KF_R: measurement noise (m)
+PAIR_KF_Q = float(os.environ.get("FBEV_PAIR_KF_Q", "0.1"))
+PAIR_KF_R = float(os.environ.get("FBEV_PAIR_KF_R", "0.15"))
+PAIR_KF_MODEL = os.environ.get("FBEV_PAIR_KF_MODEL", "rw")  # trend (local linear trend) | rw (random walk)
+PAIR_KF_ZLO = float(os.environ.get("FBEV_PAIR_KF_ZLO", "6.0"))
+PAIR_KF_ZHI = float(os.environ.get("FBEV_PAIR_KF_ZHI", "25.0"))
+PAIR_KF_MIN_S = float(os.environ.get("FBEV_PAIR_KF_MIN_S", "1.0"))  # shorter pair runs (splits, re-pairing): 'tri'
+
+
+
+def kf_trend_smooth(t, y, q=None, r=None, v0=0.5):
+    """iter11: RTS smoother for a local-linear-trend series (state [w, w'], w' a random walk with spectral density
+    q^2; measurement w + N(0, r^2)); t in seconds, y with nan gaps. Returns the smoothed w (nan where t has no
+    support before the first / after the last measurement are still filled - the caller masks)."""
+    q = PAIR_KF_Q if q is None else q; r = PAIR_KF_R if r is None else r
+    y = np.asarray(y, float); t = np.asarray(t, float); n = len(y)
+    ok = np.isfinite(y)
+    if ok.sum() < 2:
+        return y.copy()
+    i0 = int(np.flatnonzero(ok)[0])
+    xs = np.zeros((n, 2)); Ps = np.zeros((n, 2, 2)); xp = np.zeros((n, 2)); Pp = np.zeros((n, 2, 2)); Fs = np.zeros((n, 2, 2))
+    rw = PAIR_KF_MODEL == "rw"  # pure random walk: the width itself wanders (q = level noise, m/sqrt(s))
+    x = np.array([y[i0], 0.0]); P = np.diag([r * r, 0.0 if rw else v0 * v0])
+    H = np.array([1.0, 0.0])
+    for k in range(n):
+        dt = 0.0 if k == 0 else max(float(t[k] - t[k - 1]), 0.0)
+        if rw:
+            F = np.eye(2); Q = q * q * np.array([[dt, 0.0], [0.0, 0.0]])
+        else:
+            F = np.array([[1.0, dt], [0.0, 1.0]])
+            Q = q * q * np.array([[dt ** 3 / 3.0, dt ** 2 / 2.0], [dt ** 2 / 2.0, dt]])
+        if k > 0:
+            x = F @ x; P = F @ P @ F.T + Q
+        Fs[k] = F; xp[k] = x; Pp[k] = P
+        if ok[k]:
+            S = float(H @ P @ H) + r * r
+            K = (P @ H) / S
+            x = x + K * (y[k] - x[0]); P = P - np.outer(K, H @ P)
+        xs[k] = x; Ps[k] = P
+    for k in range(n - 2, -1, -1):  # Rauch-Tung-Striebel
+        Pn = Pp[k + 1]
+        C = Ps[k] @ Fs[k + 1].T @ np.linalg.inv(Pn + 1e-12 * np.eye(2))
+        xs[k] = xs[k] + C @ (xs[k + 1] - xp[k + 1]); Ps[k] = Ps[k] + C @ (Ps[k + 1] - Pn) @ C.T
+    return xs[:, 0]
 
 
 def _ego_pair(fr, z_ref=10.0):
@@ -1157,6 +1278,33 @@ def pair_width_smooth(frames, s, fps, half_s=None, max_dev=None, split=None, z_r
                 vw = np.array([w_[iz] for w_ in W]); okw = np.isfinite(vw)
                 tr_m = abs(np.polyfit(np.flatnonzero(okw), vw[okw], 1)[0]) * (m - 1) if okw.sum() >= 3 else np.inf
                 mode_r = "mean" if (tr_m <= PAIR_W_TREND_M and m >= fps) else "tri"  # and >= 1 s of the pair
+            if mode_r == "kf" and m < PAIR_KF_MIN_S * fps:
+                mode_r = "tri"
+            if mode_r == "kf":
+                # iter11: the width OFFSET of the profile (LS line over z 6-25 m, evaluated at z_ref) is smoothed as a
+                # local linear trend; the profile's shape around that line is kept as measured
+                zw = (ZS >= PAIR_KF_ZLO) & (ZS <= PAIR_KF_ZHI)
+                a_obs = np.full(m, np.nan); b_obs = np.full(m, np.nan)
+                for a_, wk in enumerate(W):
+                    fw = np.isfinite(wk) & zw
+                    if fw.sum() >= 4:
+                        b_obs[a_], a_obs[a_] = np.polyfit(ZS[fw] - z_ref, wk[fw], 1)
+                    elif np.isfinite(wk[iz]):
+                        a_obs[a_] = wk[iz]; b_obs[a_] = 0.0
+                if np.isfinite(a_obs).sum() >= 3:
+                    tt = np.array([t / float(fps) for t in idx])
+                    a_hat = kf_trend_smooth(tt, a_obs)
+                    for a_, t in enumerate(idx):
+                        wk = W[a_]; f0 = np.isfinite(wk)
+                        if f0.sum() < 2 or not np.isfinite(a_obs[a_]):
+                            continue
+                        e = np.where(f0, a_hat[a_] - a_obs[a_], 0.0)
+                        e = e * np.clip(1.5 - np.abs(e) / max_dev, 0.0, 1.0)
+                        iL, iR = pairs[t]
+                        out[t][iL] = dict(frames[t][iL], xg=np.where(np.isfinite(XL[a_]), XL[a_] - (1.0 - aR) * e, np.nan))
+                        out[t][iR] = dict(frames[t][iR], xg=np.where(np.isfinite(XR[a_]), XR[a_] + aR * e, np.nan))
+                k = j + 1
+                continue
             for a_, t in enumerate(idx):
                 wk = W[a_]; f0 = np.isfinite(wk)
                 if f0.sum() < 2:
@@ -1260,6 +1408,70 @@ def lane_backfill(frames, s, fps, max_s=None, z_ref=10.0, min_hits=4, dup_m=0.8)
             out[j].append(dict(r0, xg=xj, zmin=float(fz.min()), zmax=float(fz.max()), held=False, backfill=True,
                                hits=int(r0.get("hits", 0))))
     return out
+
+def edge_backfill(frames, s, fps, lanes=None, max_s=None, z_ref=10.0, min_hits=4):
+    """iter11 (GPU iter10 exit f0000: lanes backfilled, road edges absent): the lane_backfill rule for the MAIN road
+    edges, keyed by role (main_L / main_R): an edge confirmed in the first max_s seconds (a live, not held record that
+    is present >= min_hits frames from its first frame) is copied back into the earlier frames that have no edge of
+    that role, moved by the ego travel and extended to its near end along its near slope; the copy must pass trim_edge
+    against that frame's lanes (if given). Marked 'backfill': True."""
+    max_s = EDGE_BACKFILL_S if max_s is None else max_s
+    kmax = int(round(max_s * fps))
+    if kmax < 1 or not frames:
+        return frames
+    out = [list(fr) for fr in frames]
+    for role, sd in (("main_L", -1), ("main_R", 1)):
+        k0 = r0 = None
+        for k, fr in enumerate(frames[: kmax + 1]):
+            r = next((e for e in fr if e.get("role") == role and e.get("xg") is not None), None)
+            if r is not None:
+                if not r.get("held"):
+                    k0, r0 = k, r
+                break
+        if not k0 or r0 is None:
+            continue
+        if sum(1 for fr in frames[k0:k0 + min_hits] if any(e.get("role") == role for e in fr)) < min(min_hits, len(frames) - k0):
+            continue
+        x0 = np.asarray(r0["xg"], float); f0 = np.isfinite(x0)
+        if f0.sum() < 4:
+            continue
+        zf = ZS[f0]; xf = x0[f0]
+        nz = zf <= zf[0] + 4.0
+        sl = np.polyfit(zf[nz], xf[nz], 1)[0] if nz.sum() >= 3 else 0.0
+        # the edge's own lateral motion at z_ref over its first live frames (constant-velocity continuation: the pure
+        # travel shift over-extrapolates a diverging edge pair, city 0.31 vs 0.18 m / frame width steps)
+        iz = int(np.argmin(np.abs(ZS - z_ref)))
+        vk, vx = [], []
+        for k in range(k0, min(len(frames), k0 + min_hits)):
+            r = next((e for e in frames[k] if e.get("role") == role and e.get("xg") is not None and not e.get("held")), None)
+            if r is not None and np.isfinite(np.asarray(r["xg"], float)[iz]):
+                vk.append(k); vx.append(float(np.asarray(r["xg"], float)[iz]))
+        vel = float(np.polyfit(vk, vx, 1)[0]) if len(vk) >= 3 else None
+        for j in range(0, k0):
+            if any(e.get("role") == role for e in out[j]):
+                continue
+            dz = float(s[k0]) - float(s[j])
+            zz = zf + dz
+            xj = np.full(len(ZS), np.nan)
+            m = (ZS >= zz[0]) & (ZS <= zz[-1]); xj[m] = np.interp(ZS[m], zz, xf)
+            ext = (ZS >= zf[0] - 1e-6) & (ZS < zz[0])
+            xj[ext] = xf[0] + sl * (ZS[ext] - zz[0])
+            if EDGE_BACKFILL_CV and vel is not None and np.isfinite(xj[iz]) and np.isfinite(x0[iz]):
+                xj = xj + float(np.clip(x0[iz] - vel * (k0 - j) - xj[iz], -0.5, 0.5))
+            if lanes is not None and j < len(lanes):
+                lj = [r for r in lanes[j] if r.get("xg") is not None and not r.get("fallback")]
+                xt = trim_edge(xj, sd, lj)
+                if xt is None:
+                    continue
+                xj = xt
+            fj = np.isfinite(xj)
+            if fj.sum() < 4:
+                continue
+            fz = ZS[fj]
+            out[j].append(dict(r0, xg=xj, zmin=float(fz.min()), zmax=float(fz.max()), held=False, backfill=True,
+                               kerb_occ=False, kerb_alpha=0.0))
+    return out
+
 
 KERB_CARS = os.environ.get("FBEV_KERB_CARS", "1") == "1"
 KERB_MAX_PUSH_M = float(os.environ.get("FBEV_KERB_MAX_PUSH_M", "2.5"))
