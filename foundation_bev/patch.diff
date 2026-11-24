@@ -1,375 +1,446 @@
-diff -ruN -x __pycache__ ../iter7_spec/src/bev_smooth.py src/bev_smooth.py
---- ../iter7_spec/src/bev_smooth.py	2026-11-24 08:45:08.466406374 +0530
-+++ src/bev_smooth.py	2026-11-24 11:01:20.384220948 +0530
-@@ -206,11 +206,15 @@
- 
- 
- class _KF:
--    def __init__(self, x, s, cls, dt):
-+    def __init__(self, x, s, cls, dt, final=False):
-         self.x = np.array([x, s, 0.0, 0.0])
-         self.P = np.diag([1.0, 4.0, 4.0, 16.0])
-         self.cls = cls
-         self.dt = dt
-+        # iter8: final=True only in the last smoothing pass of finalize(). The far-range measurement model and the
-+        # tighter robust gate apply there; online association and re-link keep the iter7 model, so track IDs,
-+        # fragments and relinks are unchanged and only the smoothed (drawn / scored) positions differ.
-+        self.final = final
- 
-     def FQ(self, steps=1):
-         dt = self.dt * steps
-@@ -234,15 +238,30 @@
-         # iter7: monocular range error lies along the viewing ray, not along ego z. For off-axis cars
-         # (a2d2a track 30, bearing ~-30 deg) an axis-aligned R let a 4 m range jump drag x by ~3 m.
-         th = float(np.arctan2(zx, max(float(z_ego), 0.5)))  # bearing in the ego frame (zs is world z)
--        th *= float(np.clip((abs(th) - RAY_R_DEG0) / RAY_R_DEG0, 0.0, 1.0)) * RAY_R  # only off-axis (>10 deg, full by 20 deg)
-+        w_far = far_weight(z_ego) if self.final else 0.0  # iter8: 0 below FAR_Z0, 1 beyond FAR_Z0 + FAR_RAMP
-+        ray = max(RAY_R, w_far if FAR_MODE in ("ray", "both") else 0.0)
-+        th *= float(np.clip((abs(th) - RAY_R_DEG0) / RAY_R_DEG0, 0.0, 1.0)) * ray  # only off-axis (> RAY_R_DEG0, full by 2x)
-+        if FAR_MODE in ("inflate", "both"):
-+            # far range is correlated frame to frame: trust it less, but never beyond FAR_LON_MAX (iter8 CPU smoke:
-+            # uncapped, a 54 m car on kitti_highway_late got sigma 14 m, its 32 m outlier was no longer rejected
-+            # and the smoothed track slid 20 m toward the ego)
-+            lon_g, lon = lon, max(lon, min(lon * (1.0 + FAR_K * w_far), FAR_LON_MAX))
-+        else:
-+            lon_g = lon
-         al = np.array([np.sin(th), np.cos(th)]); pe = np.array([np.cos(th), -np.sin(th)])
-         R = (lat * m[1]) ** 2 * np.outer(pe, pe) + (lon * m[2]) ** 2 * np.outer(al, al)
-         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
-         y = np.array([zx, zs]) - H @ self.x
-         S = H @ self.P @ H.T + R
-         d2 = float(y @ np.linalg.solve(S, y))
--        if d2 > ROBUST_NIS:  # iter7: down-weight outlier measurements (a2d2a track 30: 4 m depth jumps at x=-15 m)
--            R = R * (d2 / ROBUST_NIS)
-+        nis = ROBUST_NIS_FINAL if self.final else ROBUST_NIS
-+        if FAR_GATE_BASE and lon_g != lon:
-+            # iter8: outliers are judged with the un-inflated range sigma, so inflating far R never lets a range
-+            # outlier through (kitti_highway_late CPU smoke: a 32 m reading on a 54 m car pulled the track 20 m)
-+            Rg = (lat * m[1]) ** 2 * np.outer(pe, pe) + (lon_g * m[2]) ** 2 * np.outer(al, al)
-+            d2 = float(y @ np.linalg.solve(H @ self.P @ H.T + Rg, y))
-+        if d2 > nis:  # iter7: down-weight outlier measurements (a2d2a track 30: 4 m depth jumps at x=-15 m)
-+            R = R * (d2 / nis)
-             S = H @ self.P @ H.T + R
-         K = self.P @ H.T @ np.linalg.inv(S)
-         self.x = self.x + K @ y
-@@ -253,8 +272,52 @@
- # opt-in (FBEV_RAY_R=1): CPU replay a2d2a accel 0.807 -> 0.757 (track 30/43: 2.28 -> 1.89), but it fails the synthetic
- # relink/stationary test (test_bev_smooth.test_relink), so it is OFF by default until validated on GPU dets
- RAY_R = 1.0 if os.environ.get("FBEV_RAY_R", "0") == "1" else 0.0
--RAY_R_DEG0 = float(np.radians(10.0))  # iter7: ray-aligned R ramps in between 10 and 20 deg of bearing
--ROBUST_NIS = 9.0  # iter7: 3-sigma; beyond it R is inflated so the update stays within ~3 sigma
-+RAY_R_DEG0 = float(np.radians(float(os.environ.get("FBEV_RAY_DEG0", "15.0"))))  # ray-aligned R ramps in between DEG0 and 2*DEG0 of bearing (iter7 10, iter8 15)
-+ROBUST_NIS = 9.0  # iter7: 3-sigma; beyond it R is inflated so the update stays within ~3 sigma (online + relink)
-+# iter8: final smoothing pass gate. 9 (= online). Tighter gates (4, 6) lowered accel but pulled smoothed tracks away
-+# from the measurements (GPU-track replay: kitti_highway_final p90 residual 4.7 -> 6.4 m at 4), so they stay opt-in.
-+ROBUST_NIS_FINAL = float(os.environ.get("FBEV_ROBUST_NIS", "9.0"))
-+
-+# iter8 (target d): a2d2a far car (GPU iter7 track 31, x -12 m, z 19-25 m) has 4-5 m range jumps lasting several
-+# frames. Range-gated measurement model, far tracks only: FBEV_FAR_MODE = off | ray | inflate | both.
-+# Default "ray": in the final pass, range noise of far (z > 12 m, full by 18 m), off-axis (bearing > 15 deg, full by
-+# 30 deg) cars lies along the viewing ray. GPU-track replay: a2d2a track 31 accel 1.84 -> ~0.5 with unchanged
-+# residual to the measurements. "inflate"/"both" (range sigma x (1 + FAR_K)) looked better on accel but let the
-+# smoothed tracks drift 5-10 m from the data on the KITTI highways (it just stops following the measurements): off.
-+FAR_MODE = os.environ.get("FBEV_FAR_MODE", "ray")
-+FAR_Z0 = float(os.environ.get("FBEV_FAR_Z0", "12.0"))
-+FAR_RAMP = float(os.environ.get("FBEV_FAR_RAMP", "6.0"))
-+FAR_K = float(os.environ.get("FBEV_FAR_K", "2.0"))
-+FAR_LON_MAX = float(os.environ.get("FBEV_FAR_LON_MAX", "99.0"))  # m, cap on the inflated range sigma (inflate/both modes only)
-+FAR_GATE_BASE = os.environ.get("FBEV_FAR_GATE", "base") == "base"  # base | infl: which range sigma the outlier gate uses
-+
-+
-+def far_weight(z_ego):
-+    if FAR_MODE == "off" or z_ego is None:
-+        return 0.0
-+    return float(np.clip((float(z_ego) - FAR_Z0) / max(FAR_RAMP, 1e-3), 0.0, 1.0))
-+
-+
-+# iter8 (target c): the tracker world frame moves at the PRIOR ego speed, so a parked car is "moving" whenever the
-+# selected speed differs (lane_split prior 18 vs 4.7 m/s) and is never flagged stationary; its stage-1 jitter then
-+# lands in accel_rms. After ego selection, re-test stationarity in the TRUE world frame and pin it there.
-+REPIN = os.environ.get("FBEV_REPIN", "0") == "1"  # off: no effect on the GPU-track replay (lane_split parked cars sweep sideways with ego yaw, so they never test static)
-+REPIN_MPS = float(os.environ.get("FBEV_REPIN_MPS", "0.8"))
-+
-+
-+def repin_true_world(pos, vel, frames, fps, prior, sel, thr=None):
-+    """pos/vel in the prior world frame (rows of the RTS output). Returns (pos, stationary)."""
-+    thr = REPIN_MPS if thr is None else thr
-+    frames = np.asarray(frames, float)
-+    v = np.asarray(vel, float).copy()
-+    v[:, 1] -= (prior - sel)  # world velocity w.r.t. the selected ego speed
-+    if len(frames) < 8 or np.median(np.linalg.norm(v, axis=1)) >= thr:
-+        return pos, False
-+    corr = (prior - sel) * frames / fps  # prior world z = true world z + (prior - sel) * t
-+    zt = pos[:, 1] - corr
-+    out = pos.copy()
-+    out[:, 0] = np.median(pos[:, 0]); out[:, 1] = np.median(zt) + corr
-+    return out, True
- 
- 
- class ObjTracker:
-@@ -369,10 +432,10 @@
-             Ps[k] = Ps[k] + C @ (Ps[k + 1] - Pp) @ C.T
-         return np.array(xs)
- 
--    def _refilter(self, hist, cls):
-+    def _refilter(self, hist, cls, final=False):
-         """Re-run the Kalman over a (possibly merged) measurement list so F/Q/Pp are consistent."""
-         first = hist[0]
--        kf = _KF(first["meas"][0], first["meas"][1], cls, self.dt)
-+        kf = _KF(first["meas"][0], first["meas"][1], cls, self.dt, final=final)
-         out = [dict(first, xf=kf.x.copy(), Pf=kf.P.copy(), xp=kf.x.copy(), Pp=kf.P.copy(), F=kf.FQ()[0], Q=kf.FQ()[1])]
-         byf = {h["frame"]: h for h in hist}
-         for f in range(first["frame"] + 1, hist[-1]["frame"] + 1):
-@@ -388,6 +451,17 @@
-             out.append(rec)
+diff -ruN -x __pycache__ iter8_spec/src/foundation_bev.py iter9_spec/src/foundation_bev.py
+--- iter8_spec/src/foundation_bev.py	2026-11-24 10:47:02.142482353 +0530
++++ iter9_spec/src/foundation_bev.py	2026-11-24 13:30:19.264958945 +0530
+@@ -49,6 +49,12 @@
+ COL_EDGE = (40, 140, 255)
+ COL_EGO = (230, 230, 230)
+ STATIC_PIN_MPS = 1.5  # iter6
++# iter9: static test in the ego-compensated WORLD frame (VO heading + selected travel). The iter6 test only removes
++# ego translation, so with ego yaw a parked car sweeps sideways (lane_split: ~3 m/s at 13 deg/s yaw) and longitudinally,
++# is not pinned and draws a short diagonal trail (lane_split f29 z 12-18 / 25, munich f692 right side).
++WORLD_PIN = os.environ.get("FBEV_WORLD_PIN", "0") == "1"  # iter9: VO-heading world pin; OFF (VO psi does not fit track motion)
++RHT_PIN = os.environ.get("FBEV_RHT_PIN", "1") == "1"  # iter9: right-hand traffic: right-side track moving backward -> dot
++RHT_MAX_RATIO = float(os.environ.get("FBEV_RHT_MAX_RATIO", "1.5"))  # backward speed <= ratio x ego speed
+ STATIC_PERP_RATIO = 1.0  # iter7: |v_lat| > ratio * |v_long| -> sideways-dominant track: dot at current position, no trail
+ COL_PATH = (255, 255, 255)  # iter4: ego path white, distinct from lines
+ COL_SPLIT = (40, 200, 255)  # iter4: exit/split edges + gore outline, lighter orange
+@@ -667,8 +673,27 @@
          return out
  
-+    def _smooth_final(self, meas, cls, stationary_mps=0.8):
-+        """iter8: the stationary decision (and a stationary track's pinned position) comes from the iter7 model;
-+        a moving track's smoothed path comes from the final-pass model (far-range R + 2-sigma robust gate)."""
-+        hist0 = self._refilter(meas, cls)
-+        xs0 = self._rts(hist0)
-+        stationary = bool(np.median(np.linalg.norm(xs0[:, 2:], axis=1)) < stationary_mps)
-+        if stationary or (FAR_MODE == "off" and ROBUST_NIS_FINAL == ROBUST_NIS):
-+            return hist0, xs0, stationary
-+        hist = self._refilter(meas, cls, final=True)
-+        return hist, self._rts(hist), False
+ 
++def world_static_pin(tr, hist_, now, tf, ego, fps, thr=None):
++    """iter9: if the track's ground speed in the world frame (ego pose: VO heading psi + selected travel) is below
++    STATIC_PIN_MPS, return its median world position expressed in the CURRENT ego frame, else None."""
++    thr = STATIC_PIN_MPS if thr is None else thr
++    fr = [int(r["frame"]) for r in hist_]
++    if len(fr) < 5 or max(fr) >= len(ego["psi"]):
++        return None
++    xe = np.array([r["smooth"][0] for r in hist_], float)
++    ze = np.array([r["smooth"][1] - tf(r["frame"]) for r in hist_], float)  # ego-relative z at each frame
++    W = np.array([EM.ego_to_world(ego, f, x, z) for f, x, z in zip(fr, xe, ze)], float)
++    dt_ = max((fr[-1] - fr[0]) / fps, 1e-3)
++    v_w = float(np.hypot(*(np.median(W[-3:], 0) - np.median(W[:3], 0)))) / dt_
++    if v_w >= thr:
++        return None
++    mx, mz = np.median(W, 0)
++    ex, ez = EM.world_to_ego(ego, now, mx, mz)
++    return float(ex), float(ez)
 +
-     def finalize(self, stationary_mps=0.8):
-         tracks = [self._trim(t) for t in self.done + self.active]
-         self.active, self.done = [], []
-@@ -452,11 +526,8 @@
-             meas = [h for h in t["hist"] if h["meas"] is not None]
-             if len(meas) < self.min_len:
-                 continue
--            hist = self._refilter(meas, t["cls"])
--            xs = self._rts(hist)
-+            hist, xs, stationary = self._smooth_final(meas, t["cls"], stationary_mps)
-             pos = xs[:, :2]
--            vel = np.linalg.norm(xs[:, 2:], axis=1)
--            stationary = bool(np.median(vel) < stationary_mps)
-             if stationary:
-                 pos = np.repeat(np.median(pos, 0, keepdims=True), len(pos), 0)
-             rows = []
-diff -ruN -x __pycache__ ../iter7_spec/src/foundation_bev.py src/foundation_bev.py
---- ../iter7_spec/src/foundation_bev.py	2026-11-24 08:37:50.641762838 +0530
-+++ src/foundation_bev.py	2026-11-24 10:47:02.142482353 +0530
-@@ -1097,7 +1097,7 @@
++
+ def draw_bev2(h, now, tracks_by_frame, lanes, edges, speed, fps, tail, bev_w=BEV_W, travel_fn=None, ego_path=None,
+-              static_stub=3, gores=None, s_sel=None):
++              static_stub=3, gores=None, s_sel=None, ego=None):
+     panel = np.full((h, bev_w, 3), 22, np.uint8)
+     scale = bev_scale(h, bev_w)
+     for metre in (10, 20, 30, 40):
+@@ -725,8 +750,22 @@
+                 perp = v_lat > STATIC_PERP_RATIO * v_g and v_lat > 1.0
+                 if os.environ.get("FBEV_DEBUG_PIN") and now == int(os.environ["FBEV_DEBUG_PIN"]):
+                     print("PIN", tr.get("id"), len(hist_), round(v_g, 2), round(v_lat, 2), perp, rel[-1], rel[0], file=sys.stderr)
++                pin_w = world_static_pin(tr, hist_, now, tf, ego, fps) if (ego is not None and WORLD_PIN) else None
++                # iter9 (lane_split f29 #14 / #3, munich f692 #90): a track first seen right of the ego (x > 1.5 m) and
++                # moving BACKWARD in the world (against the ego heading, mostly longitudinal) cannot be oncoming traffic
++                # under right-hand driving: it is a parked car whose tracker velocity follows depth / association jumps
++                # along the parked row (or an ego-speed error). Dot at its current position, no trail.
++                dz_w = float(np.median(wz[-3:]) - np.median(wz[:3])) / dt_
++                k0 = max(1, now - 10)
++                v_ego = float(np.median(np.diff(np.asarray(s_sel[k0 - 1:now + 1], float)))) * fps if now >= 1 else 0.0
++                rht = (RHT_PIN and hist_[0]["smooth"][0] > 1.5 and dz_w < 0 and v_lat < v_g
++                       and v_g <= RHT_MAX_RATIO * max(v_ego, 0.5))
+                 if v_g < STATIC_PIN_MPS:
+                     rel = [(float(np.median(wx)), float(np.median(wz)) - float(s_sel[now]))]
++                elif rht:
++                    rel = rel[-1:]
++                elif pin_w is not None:
++                    rel = [pin_w]  # iter9: parked car whose ego-frame drift comes from ego yaw: dot at its world position
+                 elif perp:
+                     rel = rel[-1:]
+         else:
+@@ -1003,6 +1042,7 @@
+                                    "depth_z": o["depth_z"], "vplane": o["vplane"]} for o in objs],
+                          "lane_boxes": [[round(float(v), 1) for v in b] for b in lane_boxes],
+                          "edge_boxes": [[round(float(v), 1) for v in b] for b in edge_boxes]})
++        ob["car_boxes"] = [[float(v) for v in o["box"][:4]] for o in objs if o.get("cls") == "car"]  # iter9: kerb rule
+         obs_all.append(ob)
+         objs_all.append(objs)
+         has_all.append(has)
+@@ -1096,6 +1136,7 @@
+     ds_line = ds if args.line_motion == "straight" else 0.0
      et = EdgePair(args)
      lanes_live, edges_live, raw_counts = [], [], []
++    edges_raw_live = []
      gores_live = []
--    stage_lines = LM.StageLines() if args.lines == "mt" else None
-+    stage_lines = LM.StageLines(fps=fps) if args.lines == "mt" else None
+     stage_lines = LM.StageLines(fps=fps) if args.lines == "mt" else None
      n_agg = args.lane_agg_frames if args.lane_agg_frames > 0 else (6 if fps <= 10 else 15)
-     if args.lane_agg_frames < 0:
-         n_agg = 0
-@@ -1253,7 +1253,7 @@
+@@ -1121,8 +1162,10 @@
+                 paint_bev[v_[okp].astype(int), u_[okp].astype(int)] = 1
+                 paint_bev = cv2.dilate(paint_bev, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 15)))
+             road_bev = np.unpackbits(ob["road_bev"])[: bev_hw[0] * bev_hw[1]].reshape(bev_hw).astype(bool)
++            cars_k = LM.car_footprints(ob.get("car_boxes"), gm.lift)  # iter9: parked-car rows -> kerb behind them
+             lz, ez, gz = stage_lines.step(k, road_bev, paint_bev > 0, bev_valid, IP.RES,
+-                                          ds=float(s_ego[k] - s_ego[k - 1]) if k else 0.0)
++                                          ds=float(s_ego[k] - s_ego[k - 1]) if k else 0.0, cars=cars_k)
++            edges_raw_live.append({r_: np.where(np.isfinite(x_), x_, np.nan) for r_, x_ in stage_lines.last_raw.items()})
+             # iter5: iter3-style nearest L/R fallback when lines_mt has no confident lane on that side at z~10 m
+             fits_l, efits_l, _ = fit_frame_lines(ob, gm, prior, args, agg=lane_agg, ds_k=float(s_ego[k] - s_ego[k - 1]) if k else 0.0)
+             leg = lt.step(k, fits_l, ds_line); et.step(k, efits_l, ds_line)
+@@ -1141,6 +1184,12 @@
+         raw_counts.append({"lane_px": int(len(ob["lane_px"])), "edge_px_L": int(len(ob["edge_px"][0])),
+                            "edge_px_R": int(len(ob["edge_px"][1])), "lane_fits": len(fits), "edge_fits": len(efits),
+                            "rail_pairs": int(ob["n_rail_pairs"])})
++    if stage_lines is not None and LM.LINE_SMOOTH_S > 0:
++        # iter9: zero-lag centred smoothing of lanes and edges (+-0.3 s, symmetric window)
++        # (travel shift by default: lane / edge holds use the same convention; the VO-yaw pose variant bent lane_split R)
++        egp = ego_pose if LM.LINE_SMOOTH_POSE else None
++        lanes_live = LM.centre_smooth_lines(lanes_live, s_ego, fps, kind="lanes", ego=egp)
++        edges_live = LM.centre_smooth_lines(edges_live, s_ego, fps, kind="edges", ego=egp)
+     if args.line_window > 1 and stage_lines is None:
+         def recentre(live_list, hist):
+             sm = {key: BS.centred_smooth(hh, ds_line, args.line_window) for key, hh in hist.items()}
+@@ -1178,7 +1227,7 @@
+         bev = draw_bev2(h, k, tracks, lanes_live[k], edges_live[k], speed, fps, args.tail,
+                         travel_fn=lambda f: speed * f / fps,
+                         ego_path=EM.ego_path_in_current_frame(ego_pose, k, back=int(2 * fps), ahead_s=2.0, fps=fps),
+-                        gores=gores_live[k], s_sel=s_ego)
++                        gores=gores_live[k], s_sel=s_ego, ego=ego_pose)
+         im = np.hstack([front, bev])
+         sw.write(im)
+         if k in still_frames:
+@@ -1192,7 +1241,7 @@
+                 outl.append({"id": int(r["id"]), "side": r.get("side"), "c": [float(v) for v in r["c"]],
+                              "zmin": float(r["zmin"]), "zmax": float(r["zmax"]), "hits": int(r["hits"]),
+                              "held": bool(r["held"]), "parent": r.get("parent"), "fork_z": r.get("fork_z"), "fallback": bool(r.get("fallback", False)),
+-                             "role": r.get("role")})
++                             "role": r.get("role"), "flare": bool(r.get("flare", False)), "kerb_occ": bool(r.get("kerb_occ", False))})
+             return outl
+ 
+         lb = [BS.sample_curve(r, 1.0, MAX_DIST) for r in lanes_live[k]]
+@@ -1205,6 +1254,11 @@
+             "lanes_px": [np.nan_to_num(gm.project(p)).round(1).tolist() for p in lb if len(p) >= 2],
+             "edges_px": [np.nan_to_num(gm.project(p)).round(1).tolist() for p in eb if len(p) >= 2],
+             "raw": raw_counts[k], "gores": gores_live[k],
++            # iter9: main edges before trim/hold/kerb (diagnosis), and the ego pose used for world-frame pinning
++            "edges_raw": {r_: [[round(float(x_), 3), float(z_)] for x_, z_ in zip(xr_, LM.ZS) if np.isfinite(x_)]
++                          for r_, xr_ in (edges_raw_live[k].items() if k < len(edges_raw_live) else [])},
++            "ego": {"x": round(float(ego_pose["x"][k]), 3), "z": round(float(ego_pose["z"][k]), 3),
++                    "psi": round(float(ego_pose["psi"][k]), 5)} if k < len(ego_pose["psi"]) else None,
+         })
+     cap.release()
+     sw.close()
+@@ -1253,7 +1307,7 @@
      pp = Path(args.polylines_json)
      pp.parent.mkdir(parents=True, exist_ok=True)
      pp.write_text(json.dumps({
--        "clip": tag, "version": "iter7",
-+        "clip": tag, "version": "iter8",
+-        "clip": tag, "version": "iter8",
++        "clip": tag, "version": "iter9",
          "units": {"image": "pixels, x right, y down", "bev": "metres in current ego frame, x right, z forward",
                    "c": "x(z) = c0 + c1*z + c2*z^2 in the current ego frame"},
          "K": {"fx": fx, "fy": fy, "cx": cx, "cy": cy}, "cam_height_m": cam_h, "fps": fps, "ego_speed_mps": speed,
-@@ -1263,7 +1263,7 @@
+@@ -1263,7 +1317,7 @@
      }))
      n_lane_route = sum(1 for o in obs_all if len(o["lane_px"]))
      dp = Path(args.dets_json) if args.dets_json else pp.with_name(f"{tag}_dets_ego.json")
--    dp.write_text(json.dumps({"clip": tag, "version": "iter7", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
-+    dp.write_text(json.dumps({"clip": tag, "version": "iter8", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
+-    dp.write_text(json.dumps({"clip": tag, "version": "iter8", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
++    dp.write_text(json.dumps({"clip": tag, "version": "iter9", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
                                "ground": ground, "frames": det_dump,
                                "ego": {"selected": {k: v for k, v in ego_sel.items() if k not in ("s", "speed")},
                                        "speed_selected_mps": [round(float(v), 3) for v in ego_sel["speed"]],
-@@ -1272,7 +1272,7 @@
+@@ -1272,7 +1326,7 @@
                                        "scene_speed_mps": [round(float(v), 3) for v in scene["speed"]],
                                        "prior_mps": speed}}, default=float))
      rec = {
--        "rc": 0, "tag": tag, "version": "iter7", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
-+        "rc": 0, "tag": tag, "version": "iter8", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
+-        "rc": 0, "tag": tag, "version": "iter8", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
++        "rc": 0, "tag": tag, "version": "iter9", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
          "K": [fx, fy, cx, cy], "cam_height": cam_h, "ego_speed_mps": speed, "ground": ground,
          "n_obj_dets_npz": n_obj_dets, "n_tracks": len(tracks), "n_relink": trk.n_relink,
          "n_track_rows": len(csv_rows), "lane_gated": lt.n_gated,
-diff -ruN -x __pycache__ ../iter7_spec/src/lines_mt.py src/lines_mt.py
---- ../iter7_spec/src/lines_mt.py	2026-11-24 08:38:54.568104692 +0530
-+++ src/lines_mt.py	2026-11-24 10:51:14.251943041 +0530
-@@ -558,12 +558,24 @@
-     return best if best[1] - best[0] >= min_n else None
- 
- 
--def trim_edge(x, side, lanes, max_deg=float(os.environ.get("FBEV_EDGE_MAX_DEG", 25.0)), z_near=20.0, tol=0.5,
--              min_len_m=4.0):
--    """iter7: instead of dropping a whole edge (iter6, 15 deg), remove only the bad samples:
--    (a) samples on the inner side of a tracked lane line by > tol (diagonal lane-crossing part), and
--    (b) near-ego samples (z <= z_near) whose local heading departs > max_deg from the road heading.
--    Keep the longest remaining contiguous run (>= min_len_m); None if nothing is left."""
-+EDGE_CONV_DEG = float(os.environ.get("FBEV_EDGE_MAX_DEG", 30.0))      # iter8: converging (toward the lanes) limit
-+EDGE_DIV_DEG = float(os.environ.get("FBEV_EDGE_DIVERGE_DEG", 45.0))   # iter8: diverging (away from the road) limit; 60 -> munich R 94.1 but keeps 45-60 deg corner flares
-+EGO_HALF_M = float(os.environ.get("FBEV_EDGE_EGO_HALF_M", 1.2))       # iter8: an edge never enters the ego corridor
-+
-+
-+def trim_edge(x, side, lanes, max_deg=None, z_near=20.0, tol=0.5, min_len_m=4.0, div_deg=None, ego_half=None):
-+    """iter7: instead of dropping a whole edge, remove only the bad samples. iter8 rules:
-+    (a) lane crossing: an edge that starts outside a tracked lane line and passes > tol to its inner side is
-+        invalid from the first crossing sample ON (iter7 kept the longest run, which on lane_split f23-29 was the
-+        far diagonal part through the ego lane, and dropped the good near part);
-+    (b) ego corridor: samples with side*x < ego_half are bad (an edge cannot run through the ego lane);
-+    (c) heading, near ego (z <= z_near), split by direction w.r.t. the road heading: CONVERGING with distance
-+        (toward the lanes, the lane_split / munich-L diagonal) > max_deg (30) is bad; DIVERGING (away from the
-+        road: junction, driveway, kerb flare; 199 munich-R frames at 30-55 deg, none crossing a lane) only > div_deg (45);
-+    then keep the NEAREST remaining run >= min_len_m (None if there is none)."""
-+    max_deg = EDGE_CONV_DEG if max_deg is None else max_deg
-+    div_deg = EDGE_DIV_DEG if div_deg is None else div_deg
-+    ego_half = EGO_HALF_M if ego_half is None else ego_half
-     x = np.asarray(x, float).copy()
-     f = np.isfinite(x)
-     if f.sum() < 4:
-@@ -579,13 +591,20 @@
-         # beyond the edge (parking / kerb paint, munich and a2d2) must not trim it
-         if np.median((x[idx[:4]] - lx[idx[:4]]) * side) <= 0:
-             continue
--        bad |= both & ((x - lx) * side < -tol)
-+        cross = both & ((x - lx) * side < -tol)
-+        ci = np.flatnonzero(cross)
-+        if len(ci) >= 2:  # 2 samples (1 m) to ignore a single noisy sample
-+            bad[ci[0]:] = True
-+        else:
-+            bad |= cross
-+    bad |= f & (x * side < ego_half)
-     la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
-     ref = np.radians(float(np.median(la))) if la else 0.0
-     xs = np.where(f, x, np.interp(ZS, ZS[f], x[f]))
--    ang = np.arctan(np.gradient(xs, ZS))
--    bad |= f & (ZS <= z_near) & (np.degrees(np.abs(ang - ref)) > max_deg)
--    run = _longest_run(f & ~bad, int(round(min_len_m / (ZS[1] - ZS[0]))))
-+    dev = np.degrees(np.arctan(np.gradient(xs, ZS)) - ref) * side  # > 0: diverging (moving outward with distance)
-+    near = f & (ZS <= z_near)
-+    bad |= near & (((dev < 0) & (-dev > max_deg)) | ((dev > 0) & (dev > div_deg)))
-+    run = _nearest_run(f & ~bad, int(round(min_len_m / (ZS[1] - ZS[0]))))
-     if run is None:
-         return None
-     out = np.full(len(ZS), np.nan)
-@@ -593,6 +612,38 @@
-     return out
- 
- 
-+def is_flared(x, side, lanes, max_deg=None, z_near=20.0):
-+    """iter8: True if the kept edge uses the diverging allowance (near-ego heading > max_deg AWAY from the road).
-+    Such a main edge must not seed a split_in-vs-main fork gore (re5 munich f587-593 fired once flares were kept)."""
-+    max_deg = EDGE_CONV_DEG if max_deg is None else max_deg
-+    if x is None:
-+        return False
-+    x = np.asarray(x, float); f = np.isfinite(x)
-+    if f.sum() < 4:
-+        return False
-+    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
-+    ref = np.radians(float(np.median(la))) if la else 0.0
-+    xs = np.where(f, x, np.interp(ZS, ZS[f], x[f]))
-+    dev = np.degrees(np.arctan(np.gradient(xs, ZS)) - ref) * side
-+    return bool((f & (ZS <= z_near) & (dev > max_deg)).any())
-+
-+
-+def _nearest_run(mask, min_n):
-+    """iter8: first (nearest-to-ego) contiguous True run of at least min_n samples, as (start, stop)."""
-+    i, n = 0, len(mask)
-+    while i < n:
-+        if mask[i]:
-+            j = i
-+            while j < n and mask[j]:
-+                j += 1
-+            if j - i >= min_n:
-+                return i, j
-+            i = j
-+        else:
-+            i += 1
-+    return None
-+
-+
- def suppress_edge_duplicates(lanes, edges, d_max=None, frac=0.7, min_n=12):
-     """iter7: drop a lane line that runs within d_max of a road edge over >= frac of their common span
-     (exit_approach f0020: right-most lane 0.3 m from the right edge duplicated it)."""
-@@ -626,6 +677,23 @@
-     return keep
- 
- 
-+def retrim_held(h, cur, side, lanes):
-+    """iter8: held / filled geometry must pass trim_edge too, and a fill may only ADD samples: if re-trimming the
-+    filled edge loses any sample the current (trimmed) edge measured, the current edge is used unfilled
-+    (city f23: an old near-ego fill crossed a lane and, with crossing-invalidates-beyond, cost the whole edge)."""
-+    if h is None or not (h.get("hold_filled") or h.get("held")):
-+        return h
-+    xt = trim_edge(h["xg"], side, lanes)
-+    if cur is not None:
-+        cx = xg_of(cur)
-+        if xt is None or (np.isfinite(cx) & ~np.isfinite(xt)).any():
-+            return cur
-+    if xt is None:
-+        return None
-+    fz = ZS[np.isfinite(xt)]
-+    return dict(h, xg=xt, zmin=float(fz.min()), zmax=float(fz.max()))
-+
-+
- class EdgeHold:
-     """iter7: temporal hold per edge role. The last accepted edge is shifted by the ego travel ds
-     (x_new(z) = x_old(z + ds)) and kept per sample for up to max_age frames, with confidence decay**age.
-@@ -633,8 +701,13 @@
-     - edge present but trimmed / short: its missing samples are filled from the propagated edge, so the
-       near-ego part removed by trim_edge is bridged by the last good geometry instead of disappearing."""
- 
--    def __init__(self, max_age=5, decay=0.8):
--        self.max_age, self.decay, self.last = max_age, decay, {}
-+    def __init__(self, max_age=None, decay=0.8, fps=10.0):
-+        # iter8: hold for a fixed TIME (FBEV_EDGE_HOLD_S, 0.5 s), not 5 frames: 5 frames is 0.5 s at 10 Hz but only
-+        # 0.17 s on munich (30 Hz), where 169 held frames still left 246 frames without a right edge.
-+        hold_s = float(os.environ.get("FBEV_EDGE_HOLD_S", 0.5))
-+        self.max_age = max_age if max_age is not None else max(5, int(round(hold_s * fps)))
-+        self.decay = decay ** (5.0 / self.max_age)  # same confidence at the end of the hold
-+        self.last = {}
- 
-     @staticmethod
-     def _shift(x, ds):
-@@ -748,7 +821,7 @@
-             pairs.append((by_id[r["parent"]]["xg"], r["xg"]))
-     mains = {e["side"]: e for e in edges if e.get("role") in ("main_L", "main_R")}
-     for e in edges:
--        if e.get("role") == "split_in" and e["side"] in mains:
-+        if e.get("role") == "split_in" and e["side"] in mains and not mains[e["side"]].get("flare"):  # iter8
-             pairs.append((mains[e["side"]]["xg"], e["xg"]))
-     # lane vs its side's main edge (exit lane opening between the through-lane line and the widening edge)
-     for sd, e in (mains.items() if lane_edge else ()):
-@@ -795,14 +868,14 @@
- class StageLines:
-     """Per-clip lane / edge / gore tracking on BEV masks (road: drivable, paint: markings)."""
- 
--    def __init__(self):
-+    def __init__(self, fps=10.0):
-         self.lanes = MultiLineTracker("lane", alpha=0.25)  # iter5: 0.4 -> 0.25
-         self.edges = {r: MultiLineTracker("edge", n_birth=3, n_death=4, gate_max=2.0, alpha=0.2)
-                       for r in ("main_L", "main_R", "split_in", "split_out")}
-         self.gore = GoreTracker(n_birth=3)  # iter6: stripe gores need 3 frames
+diff -ruN -x __pycache__ iter8_spec/src/lines_mt.py iter9_spec/src/lines_mt.py
+--- iter8_spec/src/lines_mt.py	2026-11-24 10:51:14.251943041 +0530
++++ iter9_spec/src/lines_mt.py	2026-11-24 13:24:57.589302692 +0530
+@@ -876,8 +876,12 @@
          self.div = DivergenceGore()
          self.n_split_frames = 0
--        self.hold = EdgeHold()
-+        self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
+         self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
++        self.last_raw = {}
++        if not hasattr(self, "kerb"):
++            self.kerb = KerbState()
  
-     def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0):
+-    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0):
++    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0, cars=None):
++        self.last_raw = {}
          comps = components(paint_bev, res)
-@@ -834,9 +907,9 @@
+         chains, stripes = extract_chains(comps)
+         lanes = clean_lanes([_legacy(r) for r in self.lanes.step(k, [smooth_chain(c) for c in chains])])
+@@ -895,6 +899,8 @@
+             if role.startswith("main"):
+                 # iter7: trim the bad near-ego / lane-crossing part instead of dropping the edge; hold <= 5 frames
+                 sd = -1 if role == "main_L" else 1
++                if got:  # iter9: keep the untrimmed main edge for the polylines dump (diagnosis of trims on GPU runs)
++                    self.last_raw[role] = np.asarray(got[0]["x"], float).copy()
+                 tr_ = []
+                 for r in got:
+                     xt = trim_edge(r["x"], sd, lanes)
+@@ -904,6 +910,19 @@
+             for r in got:
+                 side = -1 if role == "main_L" else (1 if role == "main_R" else None)
+                 edges.append(_legacy(r, side=side, kind="edge", extra={"role": role, "split": role.startswith("split")}))
++        if KERB_CARS:  # iter9: main edge along a parked-car row -> kerb behind the cars (with hysteresis)
++            mains = {e.get("role"): e for e in edges if e.get("role") in ("main_L", "main_R")}
++            for role, sd in (("main_L", -1), ("main_R", 1)):
++                e = mains.get(role)
++                if e is None:
++                    continue
++                o = mains.get("main_R" if role == "main_L" else "main_L")
++                xk, app = self.kerb.step(role, e["xg"], sd, cars, _ref_slope(o["xg"] if o is not None else None, lanes), ds, lanes=lanes)
++                if app:
++                    fk = np.isfinite(xk)
++                    c2 = np.polyfit(ZS[fk], xk[fk], 2 if np.ptp(ZS[fk]) > 12 else 1)[::-1]
++                    e2 = dict(e, xg=xk, kerb_occ=True, c=np.concatenate([c2, np.zeros(3 - len(c2))]))
++                    edges[edges.index(e)] = e2
          for role, sd in (("main_L", -1), ("main_R", 1)):  # iter7 temporal hold (+ fill of trimmed samples)
              cur = [e for e in edges if e.get("role") == role]
              h = self.hold.step(role, cur[0] if cur else None, ds)
--            if h is not None and h.get("hold_filled") or (h is not None and h.get("held")):
--                xt = trim_edge(h["xg"], sd, lanes)  # held / filled geometry must not cross a lane either
--                h = dict(h, xg=xt) if xt is not None else (cur[0] if cur else None)
-+            h = retrim_held(h, cur[0] if cur else None, sd, lanes)
-+            if h is not None:
-+                h["flare"] = is_flared(h.get("xg"), sd, lanes)
-             if cur:
-                 edges[edges.index(cur[0])] = h
-             elif h is not None:
-diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
---- ../iter7_spec/src/run_iter7.py	2026-11-24 08:26:49.682907042 +0530
-+++ src/run_iter7.py	1970-01-01 05:30:00.000000000 +0530
+@@ -924,3 +943,227 @@
+ 
+     def events(self):
+         return self.lanes.events + [e for t in self.edges.values() for e in t.events]
++
++
++# ----------------------------------------------------------------------------------------------- iter9
++LINE_SMOOTH_S = float(os.environ.get("FBEV_LINE_SMOOTH_S", "0.3"))
++LINE_SMOOTH_SYM = os.environ.get("FBEV_LINE_SMOOTH_SYM", "1") == "1"
++LINE_SMOOTH_POSE = os.environ.get("FBEV_LINE_SMOOTH_POSE", "0") == "1"  # ego-pose transform (VO yaw) vs travel shift
++
++
++def _to_frame(x, ego, j, k):
++    """line samples x(ZS) in ego frame j -> (x', z') in ego frame k via the ego pose (heading psi, path x/z)."""
++    f = np.isfinite(x)
++    cj, sj = np.cos(ego["psi"][j]), np.sin(ego["psi"][j])
++    X = ego["x"][j] + cj * x[f] + sj * ZS[f]; Zw = ego["z"][j] - sj * x[f] + cj * ZS[f]
++    ck, sk = np.cos(ego["psi"][k]), np.sin(ego["psi"][k])
++    dx, dz = X - ego["x"][k], Zw - ego["z"][k]
++    return ck * dx - sk * dz, sk * dx + ck * dz
++
++
++def centre_smooth_lines(frames, s, fps, half_s=None, kind="lanes", ego=None):
++    """iter9: zero-lag (centred) temporal smoothing of every tracked line, done offline (the whole clip is known
++    before rendering). frames[k] = list of line records with 'xg' (ego frame k) and an 'id' (+ 'role' for edges).
++    Neighbour frames j within +-half_s seconds are moved into frame k, with the ego pose (VO heading + selected
++    travel) when given, else by the travel s only (a static world line at ego z in frame k sits at z - (s[j]-s[k])
++    in frame j), and averaged with triangular weights. Only samples present in frame k change: presence, z-extent,
++    ids, roles and flags are unchanged. Fallback (legacy) lanes are left alone."""
++    half_s = LINE_SMOOTH_S if half_s is None else half_s
++    h = int(round(half_s * fps))
++    if h < 1:
++        return frames
++    def key(r):
++        if r.get("fallback") or r.get("xg") is None or r.get("id") is None:
++            return None
++        return (r.get("role"), int(r["id"])) if kind == "edges" else int(r["id"])
++    idx = [{key(r): r for r in fr if key(r) is not None} for fr in frames]
++    use_pose = ego is not None and all(len(ego[a]) >= len(frames) for a in ("x", "z", "psi"))
++    out = []
++    for k, fr in enumerate(frames):
++        new = []
++        for r in fr:
++            kk = key(r)
++            if kk is None:
++                new.append(r); continue
++            x0 = np.asarray(r["xg"], float); f0 = np.isfinite(x0)
++            if f0.sum() < 2:
++                new.append(r); continue
++            acc = np.where(f0, x0, 0.0); wsum = f0.astype(float)
++            hk = h
++            if LINE_SMOOTH_SYM:  # symmetric window only (a one-sided window at a track's birth / end bends a trend)
++                hk = 0
++                while hk < h and 0 <= k - hk - 1 and k + hk + 1 < len(frames) and kk in idx[k - hk - 1] and kk in idx[k + hk + 1]:
++                    hk += 1
++            for j in range(max(0, k - hk), min(len(frames), k + hk + 1)):
++                rj = idx[j].get(kk) if j != k else None
++                if rj is None:
++                    continue
++                xj = np.asarray(rj["xg"], float); fj = np.isfinite(xj)
++                if fj.sum() < 2:
++                    continue
++                if use_pose:
++                    xx, zz = _to_frame(xj, ego, j, k)
++                else:
++                    xx, zz = xj[fj], ZS[fj] + (float(s[j]) - float(s[k]))  # frame-j z -> frame-k z
++                o = np.argsort(zz); xx, zz = xx[o], zz[o]
++                if len(zz) < 2 or np.any(np.diff(zz) <= 0):
++                    keep = np.concatenate([[True], np.diff(zz) > 1e-6]); xx, zz = xx[keep], zz[keep]
++                    if len(zz) < 2:
++                        continue
++                ok = f0 & (ZS >= zz[0]) & (ZS <= zz[-1])
++                if not ok.any():
++                    continue
++                w = 1.0 - abs(j - k) / (hk + 1.0)
++                acc[ok] += w * np.interp(ZS[ok], zz, xx); wsum[ok] += w
++            new.append(dict(r, xg=np.where(f0, acc / np.maximum(wsum, 1e-9), np.nan)))
++        out.append(new)
++    return out
++
++
++KERB_CARS = os.environ.get("FBEV_KERB_CARS", "1") == "1"
++KERB_MAX_PUSH_M = float(os.environ.get("FBEV_KERB_MAX_PUSH_M", "2.5"))
++KERB_MARGIN_M = float(os.environ.get("FBEV_KERB_MARGIN_M", "0.0"))
++KERB_CAR_LEN_M = 4.5
++
++
++def car_footprints(boxes, lift, inner_frac=0.15):
++    """iter9: image car boxes -> BEV contact rows. lift(us, vs) -> (N, 2) ground x, z. For each box: the ground row of
++    its bottom edge zb, the flank x at that row (xl, xr) and the central part (xa, xb: 15 % in from each side) that
++    marks 'the edge runs along this car's bottom'."""
++    out = []
++    for b in boxes or []:
++        x1, _, x2, y2 = [float(v) for v in b[:4]]
++        wb = x2 - x1
++        p = lift([x1, x2, x1 + inner_frac * wb, x2 - inner_frac * wb], [y2] * 4)
++        if not np.isfinite(p).all() or p[0, 1] <= 1.0:
++            continue
++        out.append({"zb": float(np.median(p[:, 1])), "xl": float(p[0, 0]), "xr": float(p[1, 0]),
++                    "xa": float(p[2, 0]), "xb": float(p[3, 0])})
++    return out
++
++
++def _ref_slope(other_x, lanes):
++    """road heading as dx/dz: the opposite main edge near the ego (z <= 25 m), else the median lane heading, else 0."""
++    if other_x is not None:
++        o = np.asarray(other_x, float); f = np.isfinite(o) & (ZS <= 25.0)
++        if f.sum() >= 8:
++            return float(np.polyfit(ZS[f], o[f], 1)[0])
++    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
++    return float(np.tan(np.radians(np.median(la)))) if la else 0.0
++
++
++def kerb_behind_cars(x, side, cars, ref_slope, max_push=None, margin=None, car_len=KERB_CAR_LEN_M, line_only=False,
++                     lanes=None):
++    """iter9 (lane_split f29, munich R): next to a row of parked cars the SAM drivable-area boundary is the cars'
++    bottoms / shadows, so the main edge runs diagonally in front of them instead of along the kerb behind them.
++    If the edge runs along the bottom of >= 1 car on its side (>= 2 samples within [zb - 0.5, zb + 1.5] whose
++    bearing falls inside the central 70 % of that car's bottom), the kerb is taken as the straight line with the
++    road heading (ref_slope) that clears the outer flank of every car on that side (+ margin), and the edge becomes
++    the outer envelope max(edge, line) up to the last such car + car_len + 3 m (the push ramps out over 3 m after).
++    Cars whose outer flank is > max_push outside the edge are ignored (beyond the kerb: driveway, other road).
++    Only existing samples move, and only outward, so presence and z-extent are unchanged and the edge cannot cross
++    a lane or enter the ego corridor through this. Returns (x, applied)."""
++    max_push = KERB_MAX_PUSH_M if max_push is None else max_push
++    margin = KERB_MARGIN_M if margin is None else margin
++    if x is None or not cars:
++        return x, False
++    x = np.asarray(x, float); f = np.isfinite(x)
++    if f.sum() < 4:
++        return x, False
++    q = side * x  # outward-positive
++    zmin, zmax = ZS[f].min(), ZS[f].max()
++    bounded, cons = False, []
++    lx = [np.asarray(xg_of(r), float) for r in (lanes or []) if not r.get("fallback") and xg_of(r) is not None]
++    for c in cars:
++        outer = c["xr"] if side > 0 else c["xl"]
++        if side * outer < 1.0 or not (zmin - 0.5 <= c["zb"] <= zmax + 0.5):
++            continue
++        # traffic, not parking (munich f692 / f760 queues): a long (>= 8 m) painted lane line runs alongside the car,
++        # >= 1 m inside its outer flank (a parked row has no lane line under it; lane_split's bay line is short)
++        wz = (ZS >= c["zb"] - 1.0) & (ZS <= c["zb"] + car_len)
++        traffic = False
++        for l in lx:
++            fl = np.isfinite(l)
++            if fl.sum() < 2 or np.ptp(ZS[fl]) < 8.0 or not (fl & wz).any():
++                continue
++            v = float(np.median(side * l[fl & wz]))
++            if 0.5 < v < side * outer - 1.0:
++                traffic = True; break
++        if traffic:
++            continue
++        m = f & (ZS >= c["zb"] - 0.5) & (ZS <= c["zb"] + 1.5)
++        if m.any():
++            ra, rb = sorted((c["xa"] / c["zb"], c["xb"] / c["zb"]))
++            r = x[m] / ZS[m]
++            if int(((r >= ra) & (r <= rb)).sum()) >= 2:
++                bounded = True
++        qz = float(np.interp(c["zb"], ZS[f], q[f]))
++        qo = side * outer + margin
++        if qo > qz and qo - qz <= max_push:
++            cons.append((qo, c["zb"]))
++    if not bounded or not cons:
++        return x, False
++    B = side * ref_slope
++    A = max(qo - B * zb for qo, zb in cons)
++    z_end = max(zb for _, zb in cons) + car_len + 3.0
++    if line_only:
++        return (A, B, z_end), True
++    return kerb_apply(x, side, A, B, z_end, max_push)
++
++
++def kerb_apply(x, side, A, B, z_end, max_push=None):
++    """push the edge outward onto the kerb line q = A + B z (outward-positive), capped at max_push, ramped out over
++    3 m after z_end. Only finite samples move, only outward. Returns (x, applied)."""
++    max_push = KERB_MAX_PUSH_M if max_push is None else max_push
++    x = np.asarray(x, float); f = np.isfinite(x)
++    if f.sum() < 2:
++        return x, False
++    q = side * x
++    push = np.clip(A + B * ZS - q, 0.0, max_push) * np.clip(1.0 - (ZS - z_end) / 3.0, 0.0, 1.0)
++    qn = np.where(f, q + push, np.nan)
++    return side * qn, bool((push[f] > 0.05).any())
++
++
++KERB_ENTER = int(os.environ.get("FBEV_KERB_ENTER", "3"))  # consecutive bounded frames before the kerb line applies
++KERB_HOLD = int(os.environ.get("FBEV_KERB_HOLD", "5"))    # frames the kerb line is carried after the last bounded one
++KERB_MED_N = 3                                            # kerb line = median of the last N bounded lines
++KERB_HOLD_HITS = 5                                        # a hold only after >= this many bounded frames
++
++
++class KerbState:
++    """iter9: temporal hysteresis for kerb_behind_cars (the per-frame rule toggled with car-box flicker and made the
++    edge jump by metres on a2d2a / munich): enter after KERB_ENTER consecutive bounded frames (short spurious bursts on
++    munich traffic queues stay off); the line used is the
++    median (offset at z = 10 m, slope, end) of the last KERB_MED_N bounded lines, each carried with the ego travel ds;
++    after the last bounded frame the line is carried for KERB_HOLD frames (only if >= KERB_HOLD_HITS bounded frames),
++    then dropped."""
++
++    ZR = 10.0
++
++    def __init__(self):
++        self.s = {}
++
++    def step(self, role, x, side, cars, ref_slope, ds=0.0, lanes=None):
++        st = self.s.get(role)
++        if st is not None:  # ego moved forward ds: a world line at frame-k z sits at z - ds now
++            st["L"] = [(q + B * ds, B, ze - ds) for q, B, ze in st["L"]]
++        ln, ok = (kerb_behind_cars(x, side, cars, ref_slope, line_only=True, lanes=lanes) if x is not None
++                  else (None, False))
++        if ok:
++            A, B, z_end = ln
++            if st is None:
++                st = {"L": [], "hits": 0, "age": 0}
++            st["L"] = (st["L"] + [(A + B * self.ZR, B, z_end)])[-KERB_MED_N:]
++            st["hits"] += 1; st["age"] = 0
++        elif st is not None:
++            st["age"] += 1
++            if st["age"] > KERB_HOLD or st["hits"] < KERB_HOLD_HITS:
++                st = None
++        if st is None:
++            self.s.pop(role, None)
++            return x, False
++        self.s[role] = st
++        if st["hits"] < KERB_ENTER or x is None:
++            return x, False
++        q, B, ze = (float(np.median([l[i] for l in st["L"]])) for i in range(3))
++        return kerb_apply(x, side, q - B * self.ZR, B, ze)
+diff -ruN -x __pycache__ iter8_spec/src/run_iter8.py iter9_spec/src/run_iter8.py
+--- iter8_spec/src/run_iter8.py	2026-11-24 10:42:26.609629230 +0530
++++ iter9_spec/src/run_iter8.py	1970-01-01 05:30:00.000000000 +0530
 @@ -1,394 +0,0 @@
 -# Foundation BEV iter3 (draft spec, 23 Nov 2026): iter2 kernel + bev_gate.py (detection gates, track filters,
 -# static dots) + ego_motion.py (visual ego speed/yaw, curved ego path) + per-frame dets/depth/ego dump
@@ -415,7 +486,7 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
 -WALL_CAP = float(os.environ.get("FBEV_WALL_CAP", str(3.8 * 3600)))
 -MAXF = int(os.environ.get("FBEV_MAXF", "0"))
 -SMOKE = os.environ.get("FBEV_SMOKE") == "1"
--# iter7: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
+-# iter8: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
 -# <tag>_dets_ego.json (dets_dump); WildDet3D install/pre-flight/stage 1 are skipped. FBEV_TAGS = comma list of clips.
 -REUSE = os.environ.get("FBEV_REUSE_DETS", "")
 -if os.environ.get("FBEV_TAGS"):
@@ -471,7 +542,7 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
 -    shutil.copy2(src, os.path.join(OUT, fn))
 -    meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
 -
--CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
+-CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
 -cams = json.load(open(CAMS_JSON))
 -meta["cams_json"] = os.path.basename(CAMS_JSON)
 -motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
@@ -566,7 +637,7 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
 -        meta["stage1_summary"] = json.load(open("dets/wd3d_summary.json"))
 -    except Exception as e:  # noqa: BLE001
 -        meta["stage1_summary_err"] = repr(e)
--if REUSE:  # iter7: link the kept stage-1 dets, stop if any requested clip is missing
+-if REUSE:  # iter8: link the kept stage-1 dets, stop if any requested clip is missing
 -    os.makedirs(f"{OUT}/dets", exist_ok=True)
 -    missing, used = [], {}
 -    for t in TAGS:
@@ -629,10 +700,10 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
 -        meta["videos"][tag] = {"rc": 26, "error": "missing video"}
 -        save()
 -        continue
--    o = f"{OUT}/results/{tag}_foundation_bev_iter7.mp4"
+-    o = f"{OUT}/results/{tag}_foundation_bev_iter8.mp4"
 -    dets = f"{OUT}/dets/wd3d_{tag}.npz"
 -    if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
--        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter7: reused dets_dump
+-        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter8: reused dets_dump
 -    if SMOKE:
 -        dets = dets if os.path.exists(dets) else ""
 -    elif not os.path.exists(dets):
@@ -751,13 +822,13 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
 -    lines.append("")
 -lines.append("## Outputs")
 -lines.append("")
--lines.append("- `results/<clip>_foundation_bev_iter7.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
+-lines.append("- `results/<clip>_foundation_bev_iter8.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
 -lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
 -lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
 -lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
 -lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
 -lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
--sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter7 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
+-sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter8 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
 -if os.path.exists(f"{OUT}/metrics.md"):
 -    lines += ["", open(f"{OUT}/metrics.md").read()]
 -open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")
@@ -765,9 +836,9 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter7.py src/run_iter7.py
 -sh(f"find {OUT}/results {OUT}/stills {OUT}/tracks {OUT}/polylines {OUT}/dets_dump {OUT}/run_meta.json {OUT}/README.md {OUT}/metrics.md -type f 2>/dev/null | sort | xargs -r sha256sum > {OUT}/SHA256SUMS.txt")
 -save(stage="end")
 -print("RC", meta["rc"], "fails", fails or "none", flush=True)
-diff -ruN -x __pycache__ ../iter7_spec/src/run_iter8.py src/run_iter8.py
---- ../iter7_spec/src/run_iter8.py	1970-01-01 05:30:00.000000000 +0530
-+++ src/run_iter8.py	2026-11-24 10:42:26.609629230 +0530
+diff -ruN -x __pycache__ iter8_spec/src/run_iter9.py iter9_spec/src/run_iter9.py
+--- iter8_spec/src/run_iter9.py	1970-01-01 05:30:00.000000000 +0530
++++ iter9_spec/src/run_iter9.py	2026-11-24 12:55:33.515059928 +0530
 @@ -0,0 +1,394 @@
 +# Foundation BEV iter3 (draft spec, 23 Nov 2026): iter2 kernel + bev_gate.py (detection gates, track filters,
 +# static dots) + ego_motion.py (visual ego speed/yaw, curved ego path) + per-frame dets/depth/ego dump
@@ -869,7 +940,7 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter8.py src/run_iter8.py
 +    shutil.copy2(src, os.path.join(OUT, fn))
 +    meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
 +
-+CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
++CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter9.json", "cams_iter8.json", "cams_iter7.json", "cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
 +cams = json.load(open(CAMS_JSON))
 +meta["cams_json"] = os.path.basename(CAMS_JSON)
 +motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
@@ -1027,7 +1098,7 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter8.py src/run_iter8.py
 +        meta["videos"][tag] = {"rc": 26, "error": "missing video"}
 +        save()
 +        continue
-+    o = f"{OUT}/results/{tag}_foundation_bev_iter8.mp4"
++    o = f"{OUT}/results/{tag}_foundation_bev_iter9.mp4"
 +    dets = f"{OUT}/dets/wd3d_{tag}.npz"
 +    if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
 +        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter8: reused dets_dump
@@ -1149,13 +1220,13 @@ diff -ruN -x __pycache__ ../iter7_spec/src/run_iter8.py src/run_iter8.py
 +    lines.append("")
 +lines.append("## Outputs")
 +lines.append("")
-+lines.append("- `results/<clip>_foundation_bev_iter8.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
++lines.append("- `results/<clip>_foundation_bev_iter9.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
 +lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
 +lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
 +lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
 +lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
 +lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
-+sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter8 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
++sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter9 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
 +if os.path.exists(f"{OUT}/metrics.md"):
 +    lines += ["", open(f"{OUT}/metrics.md").read()]
 +open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")

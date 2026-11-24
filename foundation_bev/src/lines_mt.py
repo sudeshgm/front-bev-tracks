@@ -876,8 +876,12 @@ class StageLines:
         self.div = DivergenceGore()
         self.n_split_frames = 0
         self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
+        self.last_raw = {}
+        if not hasattr(self, "kerb"):
+            self.kerb = KerbState()
 
-    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0):
+    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0, cars=None):
+        self.last_raw = {}
         comps = components(paint_bev, res)
         chains, stripes = extract_chains(comps)
         lanes = clean_lanes([_legacy(r) for r in self.lanes.step(k, [smooth_chain(c) for c in chains])])
@@ -895,6 +899,8 @@ class StageLines:
             if role.startswith("main"):
                 # iter7: trim the bad near-ego / lane-crossing part instead of dropping the edge; hold <= 5 frames
                 sd = -1 if role == "main_L" else 1
+                if got:  # iter9: keep the untrimmed main edge for the polylines dump (diagnosis of trims on GPU runs)
+                    self.last_raw[role] = np.asarray(got[0]["x"], float).copy()
                 tr_ = []
                 for r in got:
                     xt = trim_edge(r["x"], sd, lanes)
@@ -904,6 +910,19 @@ class StageLines:
             for r in got:
                 side = -1 if role == "main_L" else (1 if role == "main_R" else None)
                 edges.append(_legacy(r, side=side, kind="edge", extra={"role": role, "split": role.startswith("split")}))
+        if KERB_CARS:  # iter9: main edge along a parked-car row -> kerb behind the cars (with hysteresis)
+            mains = {e.get("role"): e for e in edges if e.get("role") in ("main_L", "main_R")}
+            for role, sd in (("main_L", -1), ("main_R", 1)):
+                e = mains.get(role)
+                if e is None:
+                    continue
+                o = mains.get("main_R" if role == "main_L" else "main_L")
+                xk, app = self.kerb.step(role, e["xg"], sd, cars, _ref_slope(o["xg"] if o is not None else None, lanes), ds, lanes=lanes)
+                if app:
+                    fk = np.isfinite(xk)
+                    c2 = np.polyfit(ZS[fk], xk[fk], 2 if np.ptp(ZS[fk]) > 12 else 1)[::-1]
+                    e2 = dict(e, xg=xk, kerb_occ=True, c=np.concatenate([c2, np.zeros(3 - len(c2))]))
+                    edges[edges.index(e)] = e2
         for role, sd in (("main_L", -1), ("main_R", 1)):  # iter7 temporal hold (+ fill of trimmed samples)
             cur = [e for e in edges if e.get("role") == role]
             h = self.hold.step(role, cur[0] if cur else None, ds)
@@ -924,3 +943,227 @@ class StageLines:
 
     def events(self):
         return self.lanes.events + [e for t in self.edges.values() for e in t.events]
+
+
+# ----------------------------------------------------------------------------------------------- iter9
+LINE_SMOOTH_S = float(os.environ.get("FBEV_LINE_SMOOTH_S", "0.3"))
+LINE_SMOOTH_SYM = os.environ.get("FBEV_LINE_SMOOTH_SYM", "1") == "1"
+LINE_SMOOTH_POSE = os.environ.get("FBEV_LINE_SMOOTH_POSE", "0") == "1"  # ego-pose transform (VO yaw) vs travel shift
+
+
+def _to_frame(x, ego, j, k):
+    """line samples x(ZS) in ego frame j -> (x', z') in ego frame k via the ego pose (heading psi, path x/z)."""
+    f = np.isfinite(x)
+    cj, sj = np.cos(ego["psi"][j]), np.sin(ego["psi"][j])
+    X = ego["x"][j] + cj * x[f] + sj * ZS[f]; Zw = ego["z"][j] - sj * x[f] + cj * ZS[f]
+    ck, sk = np.cos(ego["psi"][k]), np.sin(ego["psi"][k])
+    dx, dz = X - ego["x"][k], Zw - ego["z"][k]
+    return ck * dx - sk * dz, sk * dx + ck * dz
+
+
+def centre_smooth_lines(frames, s, fps, half_s=None, kind="lanes", ego=None):
+    """iter9: zero-lag (centred) temporal smoothing of every tracked line, done offline (the whole clip is known
+    before rendering). frames[k] = list of line records with 'xg' (ego frame k) and an 'id' (+ 'role' for edges).
+    Neighbour frames j within +-half_s seconds are moved into frame k, with the ego pose (VO heading + selected
+    travel) when given, else by the travel s only (a static world line at ego z in frame k sits at z - (s[j]-s[k])
+    in frame j), and averaged with triangular weights. Only samples present in frame k change: presence, z-extent,
+    ids, roles and flags are unchanged. Fallback (legacy) lanes are left alone."""
+    half_s = LINE_SMOOTH_S if half_s is None else half_s
+    h = int(round(half_s * fps))
+    if h < 1:
+        return frames
+    def key(r):
+        if r.get("fallback") or r.get("xg") is None or r.get("id") is None:
+            return None
+        return (r.get("role"), int(r["id"])) if kind == "edges" else int(r["id"])
+    idx = [{key(r): r for r in fr if key(r) is not None} for fr in frames]
+    use_pose = ego is not None and all(len(ego[a]) >= len(frames) for a in ("x", "z", "psi"))
+    out = []
+    for k, fr in enumerate(frames):
+        new = []
+        for r in fr:
+            kk = key(r)
+            if kk is None:
+                new.append(r); continue
+            x0 = np.asarray(r["xg"], float); f0 = np.isfinite(x0)
+            if f0.sum() < 2:
+                new.append(r); continue
+            acc = np.where(f0, x0, 0.0); wsum = f0.astype(float)
+            hk = h
+            if LINE_SMOOTH_SYM:  # symmetric window only (a one-sided window at a track's birth / end bends a trend)
+                hk = 0
+                while hk < h and 0 <= k - hk - 1 and k + hk + 1 < len(frames) and kk in idx[k - hk - 1] and kk in idx[k + hk + 1]:
+                    hk += 1
+            for j in range(max(0, k - hk), min(len(frames), k + hk + 1)):
+                rj = idx[j].get(kk) if j != k else None
+                if rj is None:
+                    continue
+                xj = np.asarray(rj["xg"], float); fj = np.isfinite(xj)
+                if fj.sum() < 2:
+                    continue
+                if use_pose:
+                    xx, zz = _to_frame(xj, ego, j, k)
+                else:
+                    xx, zz = xj[fj], ZS[fj] + (float(s[j]) - float(s[k]))  # frame-j z -> frame-k z
+                o = np.argsort(zz); xx, zz = xx[o], zz[o]
+                if len(zz) < 2 or np.any(np.diff(zz) <= 0):
+                    keep = np.concatenate([[True], np.diff(zz) > 1e-6]); xx, zz = xx[keep], zz[keep]
+                    if len(zz) < 2:
+                        continue
+                ok = f0 & (ZS >= zz[0]) & (ZS <= zz[-1])
+                if not ok.any():
+                    continue
+                w = 1.0 - abs(j - k) / (hk + 1.0)
+                acc[ok] += w * np.interp(ZS[ok], zz, xx); wsum[ok] += w
+            new.append(dict(r, xg=np.where(f0, acc / np.maximum(wsum, 1e-9), np.nan)))
+        out.append(new)
+    return out
+
+
+KERB_CARS = os.environ.get("FBEV_KERB_CARS", "1") == "1"
+KERB_MAX_PUSH_M = float(os.environ.get("FBEV_KERB_MAX_PUSH_M", "2.5"))
+KERB_MARGIN_M = float(os.environ.get("FBEV_KERB_MARGIN_M", "0.0"))
+KERB_CAR_LEN_M = 4.5
+
+
+def car_footprints(boxes, lift, inner_frac=0.15):
+    """iter9: image car boxes -> BEV contact rows. lift(us, vs) -> (N, 2) ground x, z. For each box: the ground row of
+    its bottom edge zb, the flank x at that row (xl, xr) and the central part (xa, xb: 15 % in from each side) that
+    marks 'the edge runs along this car's bottom'."""
+    out = []
+    for b in boxes or []:
+        x1, _, x2, y2 = [float(v) for v in b[:4]]
+        wb = x2 - x1
+        p = lift([x1, x2, x1 + inner_frac * wb, x2 - inner_frac * wb], [y2] * 4)
+        if not np.isfinite(p).all() or p[0, 1] <= 1.0:
+            continue
+        out.append({"zb": float(np.median(p[:, 1])), "xl": float(p[0, 0]), "xr": float(p[1, 0]),
+                    "xa": float(p[2, 0]), "xb": float(p[3, 0])})
+    return out
+
+
+def _ref_slope(other_x, lanes):
+    """road heading as dx/dz: the opposite main edge near the ego (z <= 25 m), else the median lane heading, else 0."""
+    if other_x is not None:
+        o = np.asarray(other_x, float); f = np.isfinite(o) & (ZS <= 25.0)
+        if f.sum() >= 8:
+            return float(np.polyfit(ZS[f], o[f], 1)[0])
+    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
+    return float(np.tan(np.radians(np.median(la)))) if la else 0.0
+
+
+def kerb_behind_cars(x, side, cars, ref_slope, max_push=None, margin=None, car_len=KERB_CAR_LEN_M, line_only=False,
+                     lanes=None):
+    """iter9 (lane_split f29, munich R): next to a row of parked cars the SAM drivable-area boundary is the cars'
+    bottoms / shadows, so the main edge runs diagonally in front of them instead of along the kerb behind them.
+    If the edge runs along the bottom of >= 1 car on its side (>= 2 samples within [zb - 0.5, zb + 1.5] whose
+    bearing falls inside the central 70 % of that car's bottom), the kerb is taken as the straight line with the
+    road heading (ref_slope) that clears the outer flank of every car on that side (+ margin), and the edge becomes
+    the outer envelope max(edge, line) up to the last such car + car_len + 3 m (the push ramps out over 3 m after).
+    Cars whose outer flank is > max_push outside the edge are ignored (beyond the kerb: driveway, other road).
+    Only existing samples move, and only outward, so presence and z-extent are unchanged and the edge cannot cross
+    a lane or enter the ego corridor through this. Returns (x, applied)."""
+    max_push = KERB_MAX_PUSH_M if max_push is None else max_push
+    margin = KERB_MARGIN_M if margin is None else margin
+    if x is None or not cars:
+        return x, False
+    x = np.asarray(x, float); f = np.isfinite(x)
+    if f.sum() < 4:
+        return x, False
+    q = side * x  # outward-positive
+    zmin, zmax = ZS[f].min(), ZS[f].max()
+    bounded, cons = False, []
+    lx = [np.asarray(xg_of(r), float) for r in (lanes or []) if not r.get("fallback") and xg_of(r) is not None]
+    for c in cars:
+        outer = c["xr"] if side > 0 else c["xl"]
+        if side * outer < 1.0 or not (zmin - 0.5 <= c["zb"] <= zmax + 0.5):
+            continue
+        # traffic, not parking (munich f692 / f760 queues): a long (>= 8 m) painted lane line runs alongside the car,
+        # >= 1 m inside its outer flank (a parked row has no lane line under it; lane_split's bay line is short)
+        wz = (ZS >= c["zb"] - 1.0) & (ZS <= c["zb"] + car_len)
+        traffic = False
+        for l in lx:
+            fl = np.isfinite(l)
+            if fl.sum() < 2 or np.ptp(ZS[fl]) < 8.0 or not (fl & wz).any():
+                continue
+            v = float(np.median(side * l[fl & wz]))
+            if 0.5 < v < side * outer - 1.0:
+                traffic = True; break
+        if traffic:
+            continue
+        m = f & (ZS >= c["zb"] - 0.5) & (ZS <= c["zb"] + 1.5)
+        if m.any():
+            ra, rb = sorted((c["xa"] / c["zb"], c["xb"] / c["zb"]))
+            r = x[m] / ZS[m]
+            if int(((r >= ra) & (r <= rb)).sum()) >= 2:
+                bounded = True
+        qz = float(np.interp(c["zb"], ZS[f], q[f]))
+        qo = side * outer + margin
+        if qo > qz and qo - qz <= max_push:
+            cons.append((qo, c["zb"]))
+    if not bounded or not cons:
+        return x, False
+    B = side * ref_slope
+    A = max(qo - B * zb for qo, zb in cons)
+    z_end = max(zb for _, zb in cons) + car_len + 3.0
+    if line_only:
+        return (A, B, z_end), True
+    return kerb_apply(x, side, A, B, z_end, max_push)
+
+
+def kerb_apply(x, side, A, B, z_end, max_push=None):
+    """push the edge outward onto the kerb line q = A + B z (outward-positive), capped at max_push, ramped out over
+    3 m after z_end. Only finite samples move, only outward. Returns (x, applied)."""
+    max_push = KERB_MAX_PUSH_M if max_push is None else max_push
+    x = np.asarray(x, float); f = np.isfinite(x)
+    if f.sum() < 2:
+        return x, False
+    q = side * x
+    push = np.clip(A + B * ZS - q, 0.0, max_push) * np.clip(1.0 - (ZS - z_end) / 3.0, 0.0, 1.0)
+    qn = np.where(f, q + push, np.nan)
+    return side * qn, bool((push[f] > 0.05).any())
+
+
+KERB_ENTER = int(os.environ.get("FBEV_KERB_ENTER", "3"))  # consecutive bounded frames before the kerb line applies
+KERB_HOLD = int(os.environ.get("FBEV_KERB_HOLD", "5"))    # frames the kerb line is carried after the last bounded one
+KERB_MED_N = 3                                            # kerb line = median of the last N bounded lines
+KERB_HOLD_HITS = 5                                        # a hold only after >= this many bounded frames
+
+
+class KerbState:
+    """iter9: temporal hysteresis for kerb_behind_cars (the per-frame rule toggled with car-box flicker and made the
+    edge jump by metres on a2d2a / munich): enter after KERB_ENTER consecutive bounded frames (short spurious bursts on
+    munich traffic queues stay off); the line used is the
+    median (offset at z = 10 m, slope, end) of the last KERB_MED_N bounded lines, each carried with the ego travel ds;
+    after the last bounded frame the line is carried for KERB_HOLD frames (only if >= KERB_HOLD_HITS bounded frames),
+    then dropped."""
+
+    ZR = 10.0
+
+    def __init__(self):
+        self.s = {}
+
+    def step(self, role, x, side, cars, ref_slope, ds=0.0, lanes=None):
+        st = self.s.get(role)
+        if st is not None:  # ego moved forward ds: a world line at frame-k z sits at z - ds now
+            st["L"] = [(q + B * ds, B, ze - ds) for q, B, ze in st["L"]]
+        ln, ok = (kerb_behind_cars(x, side, cars, ref_slope, line_only=True, lanes=lanes) if x is not None
+                  else (None, False))
+        if ok:
+            A, B, z_end = ln
+            if st is None:
+                st = {"L": [], "hits": 0, "age": 0}
+            st["L"] = (st["L"] + [(A + B * self.ZR, B, z_end)])[-KERB_MED_N:]
+            st["hits"] += 1; st["age"] = 0
+        elif st is not None:
+            st["age"] += 1
+            if st["age"] > KERB_HOLD or st["hits"] < KERB_HOLD_HITS:
+                st = None
+        if st is None:
+            self.s.pop(role, None)
+            return x, False
+        self.s[role] = st
+        if st["hits"] < KERB_ENTER or x is None:
+            return x, False
+        q, B, ze = (float(np.median([l[i] for l in st["L"]])) for i in range(3))
+        return kerb_apply(x, side, q - B * self.ZR, B, ze)
