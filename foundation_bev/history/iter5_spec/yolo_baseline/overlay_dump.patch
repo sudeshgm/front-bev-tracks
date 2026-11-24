@@ -1,0 +1,58 @@
+--- a/scripts/overlay.py	2026-11-23 11:43:31.367221727 +0530
++++ b/scripts/overlay.py	2026-11-23 11:43:31.383221606 +0530
+@@ -779,6 +779,7 @@
+     parser.add_argument("--reuse-boxes", type=Path, help="Keep the vehicle boxes in this cache and recompute the lanes.")
+     parser.add_argument("--wilddet", type=Path, help="JSON from scripts/wilddet_clip.py. Drawn on top of the existing tracks.")
+     parser.add_argument("--recompute", action="store_true")
++    parser.add_argument("--dump-dir", type=Path, help="Write tracks/<clip>_tracks.csv + polylines/<clip>_polylines.json (foundation-BEV metric format).")
+     args = parser.parse_args()
+     if args.repeat < 1:
+         raise SystemExit("--repeat must be at least 1")
+@@ -830,8 +831,47 @@
+         wild_frames = json.loads(args.wilddet.read_text())["frames"]
+         if len(wild_frames) != len(samples):
+             raise SystemExit(f"wilddet file has {len(wild_frames)} frames, motion file has {len(samples)}")
++    if args.dump_dir is not None:
++        dump_baseline(args.dump_dir, args.output.stem.replace("_overlay", ""), objects, lanes, poses, frame_dt)
+     render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames)
+ 
+ 
++def dump_baseline(root, clip, objects, lanes, poses, frame_dt):
++    """Dump the YOLO overlay's drawn tracks/lanes in the ego frame (x right, z forward) per frame,
++    so smoothness_metrics.py can score YOLO with the same code as the foundation pipeline."""
++    (root / "tracks").mkdir(parents=True, exist_ok=True)
++    (root / "polylines").mkdir(parents=True, exist_ok=True)
++    names = {"vehicle": "car", "pedestrian": "person", "bicycle": "bicycle"}
++    rows = []
++    for track in objects:
++        if track["hits"] < 3 or track["name"] not in names:
++            continue
++        for sample in track["samples"]:
++            k = int(sample["token"])
++            if k >= len(poses):
++                continue
++            local = world_to_ego(np.asarray(sample["world"], dtype=np.float64).reshape(1, 2), poses[k])[0]
++            rows.append({"frame": k, "track_id": track["id"], "class": names[track["name"]], "score": "",
++                         "bev_x": f"{-local[1]:.4f}", "bev_z": f"{local[0]:.4f}"})
++    rows.sort(key=lambda r: (r["frame"], r["track_id"]))
++    with open(root / "tracks" / f"{clip}_tracks.csv", "w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=["frame", "track_id", "class", "score", "bev_x", "bev_z"])
++        w.writeheader()
++        w.writerows(rows)
++    frames = []
++    for k, pose in enumerate(poses):
++        lane_l, edge_l = [], []
++        for track in lanes:
++            if track["hits"] < 4:
++                continue
++            local = world_to_ego(np.asarray(track["world"], dtype=np.float64), pose)
++            pts = [[float(-p[1]), float(p[0])] for p in local if 0.5 < p[0] < 60]
++            if len(pts) >= 2:
++                (edge_l if track.get("name") == "road_edge" else lane_l).append(pts)
++        frames.append({"frame": k, "lanes_bev": lane_l, "edges_bev": edge_l})
++    json.dump({"clip": clip, "version": "yolo-overlay", "fps": 1.0 / frame_dt, "frames": frames},
++              open(root / "polylines" / f"{clip}_polylines.json", "w"))
++
++
+ if __name__ == "__main__":
+     main()

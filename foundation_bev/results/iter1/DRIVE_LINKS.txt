@@ -1,0 +1,12 @@
+KITTI_BEV_Test_Videos (1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1)
+Uploaded 23 Nov 2026 ~11:18 IST (Asia/Calcutta). No existing *_foundation_bev.mp4 were present; nothing overwritten.
+
+kitti_highway_sample_foundation_bev.mp4  https://drive.google.com/file/d/1yEoqruwG9jUwI7IbhhtQsDCFB0EqFTuk/view?usp=drivesdk
+kitti_highway_exit_approach_foundation_bev.mp4  https://drive.google.com/file/d/1OQY_DvfOMTQBq4M3v0p3n0qwyWmHoD4J/view?usp=drivesdk
+kitti_highway_late_foundation_bev.mp4  https://drive.google.com/file/d/1imgtmVbwqkyoEdIoKnECoiyGDwfthBWN/view?usp=drivesdk
+kitti_highway_final_foundation_bev.mp4  https://drive.google.com/file/d/1HZtygfP8ZY2KW3LJxoHNWHSoLhF0o_tT/view?usp=drivesdk
+kitti_city_cyclist_candidate_foundation_bev.mp4  https://drive.google.com/file/d/1vIvU2iNZy7OnZTxkKOeBP1QJRYTnaidW/view?usp=drivesdk
+kitti_lane_split_candidate_foundation_bev.mp4  https://drive.google.com/file/d/1CctHYUV80vrO8bOVIGZiuBj7g9AZudJz/view?usp=drivesdk
+munich_foundation_bev.mp4  https://drive.google.com/file/d/1CcgzARCEbtZyQj02RXSHk2cai3wCY9-N/view?usp=drivesdk
+a2d2a_foundation_bev.mp4  https://drive.google.com/file/d/1EGNYF2CNwWJSuMHGKgyOIw1x2CQqPNiW/view?usp=drivesdk
+a2d2b_foundation_bev.mp4  https://drive.google.com/file/d/1LNguRFlIt0YgybaYLFQiKftfksnKHo3C/view?usp=drivesdk

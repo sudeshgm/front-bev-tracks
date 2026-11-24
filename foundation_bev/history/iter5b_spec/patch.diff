@@ -1,0 +1,117 @@
+--- a/src/lines_mt.py
++++ b/src/lines_mt.py
+@@ -21,6 +21,9 @@
+   GoreTracker         hit-count + EMA on polygon vertices
+ """
+ import numpy as np
++
++# iter5b: NumPy 1.x has only np.trapz; NumPy >= 2.? removed np.trapz (2.0 added np.trapezoid)
++_trapz = getattr(np, "trapezoid", None) or np.trapz
+ import cv2
+ from scipy.interpolate import UnivariateSpline
+ from scipy.optimize import linear_sum_assignment
+@@ -535,7 +538,7 @@
+             sgn = np.sign(np.median(b[both] - a[both]))
+             xa = a[both][sel] + sgn * g0; xb = b[both][sel]; zz = z[sel]
+             poly = np.concatenate([np.stack([xa, zz], 1), np.stack([xb, zz], 1)[::-1]])
+-            out.append({"poly": poly, "n_stripes": 0, "area": float(np.trapezoid(np.abs(xb - xa), zz)),
++            out.append({"poly": poly, "n_stripes": 0, "area": float(_trapz(np.abs(xb - xa), zz)),
+                         "centre": poly.mean(0), "src": "fork_edge"})
+             continue
+         slope = np.polyfit(z, gap, 1)[0]
+@@ -546,7 +549,7 @@
+             continue
+         zz = z[sel]; xa = a[both][sel]; xb = b[both][sel]
+         poly = np.concatenate([np.stack([xa, zz], 1), np.stack([xb, zz], 1)[::-1]])
+-        out.append({"poly": poly, "n_stripes": 0, "area": float(np.trapezoid(np.abs(xb - xa), zz)),
++        out.append({"poly": poly, "n_stripes": 0, "area": float(_trapz(np.abs(xb - xa), zz)),
+                     "centre": poly.mean(0), "src": "fork"})
+     return out
+ 
+--- a/src/run_iter5.py
++++ b/src/run_iter5b.py
+@@ -42,6 +42,11 @@
+ WALL_CAP = float(os.environ.get("FBEV_WALL_CAP", str(3.8 * 3600)))
+ MAXF = int(os.environ.get("FBEV_MAXF", "0"))
+ SMOKE = os.environ.get("FBEV_SMOKE") == "1"
++# iter5b: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
++# <tag>_dets_ego.json (dets_dump); WildDet3D install/pre-flight/stage 1 are skipped. FBEV_TAGS = comma list of clips.
++REUSE = os.environ.get("FBEV_REUSE_DETS", "")
++if os.environ.get("FBEV_TAGS"):
++    TAGS = [t for t in TAGS if t in os.environ["FBEV_TAGS"].split(",")]
+ 
+ 
+ def sh(c, **k):
+@@ -93,7 +98,7 @@
+     shutil.copy2(src, os.path.join(OUT, fn))
+     meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
+ 
+-CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
++CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
+ cams = json.load(open(CAMS_JSON))
+ meta["cams_json"] = os.path.basename(CAMS_JSON)
+ motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
+@@ -111,7 +116,7 @@
+ os.makedirs(WEIGHTS, exist_ok=True)
+ ck = ""
+ stage1_s = 0
+-if not SMOKE:
++if not SMOKE and not REUSE:
+     # --- install WildDet3D (same recipe as drive-videos-22nov-wilddet3d, rc=0) ---
+     r = sh(
+         f'{PYBIN} -m pip install -q --upgrade "setuptools<80" && '
+@@ -188,6 +193,26 @@
+         meta["stage1_summary"] = json.load(open("dets/wd3d_summary.json"))
+     except Exception as e:  # noqa: BLE001
+         meta["stage1_summary_err"] = repr(e)
++if REUSE:  # iter5b: link the kept stage-1 dets, stop if any requested clip is missing
++    os.makedirs(f"{OUT}/dets", exist_ok=True)
++    missing, used = [], {}
++    for t in TAGS:
++        for src_, dst in ((f"{REUSE}/wd3d_{t}.npz", f"{OUT}/dets/wd3d_{t}.npz"),
++                          (f"{REUSE}/{t}_dets_ego.json", f"{OUT}/dets/{t}_dets_ego.json")):
++            if os.path.exists(src_):
++                if not os.path.exists(dst):
++                    shutil.copy(src_, dst)
++                used[t] = os.path.basename(dst); break
++        else:
++            missing.append(t)
++    meta["reuse_dets"] = {"dir": REUSE, "used": used, "missing": missing}
++    print("REUSE DETS", json.dumps(meta["reuse_dets"]), flush=True)
++    if missing:
++        save(rc=28, stage="reuse_dets_missing")
++        sys.exit(0)
++    if not SMOKE:
++        sh(f"{PYBIN} -c 'import scipy' 2>/dev/null || {PYBIN} -m pip install -q scipy")
++if not SMOKE:
+     # free WD3D before SAM/DAV2
+     sh(f"rm -rf {WROOT} {TMP}/ckpt")
+     save(stage="install_stage2")
+@@ -231,8 +256,10 @@
+         meta["videos"][tag] = {"rc": 26, "error": "missing video"}
+         save()
+         continue
+-    o = f"{OUT}/results/{tag}_foundation_bev_iter5.mp4"
++    o = f"{OUT}/results/{tag}_foundation_bev_iter5b.mp4"
+     dets = f"{OUT}/dets/wd3d_{tag}.npz"
++    if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
++        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter5b: reused dets_dump
+     if SMOKE:
+         dets = dets if os.path.exists(dets) else ""
+     elif not os.path.exists(dets):
+@@ -351,13 +378,13 @@
+     lines.append("")
+ lines.append("## Outputs")
+ lines.append("")
+-lines.append("- `results/<clip>_foundation_bev_iter5.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
++lines.append("- `results/<clip>_foundation_bev_iter5b.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
+ lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
+ lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
+ lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
+ lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
+ lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
+-sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter5 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
++sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter5b --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
+ if os.path.exists(f"{OUT}/metrics.md"):
+     lines += ["", open(f"{OUT}/metrics.md").read()]
+ open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")

@@ -1,0 +1,14 @@
+# Drive uploads — foundation BEV iter3 (Modal, 23 Nov 2026)
+# Folder: KITTI_BEV_Test_Videos
+# https://drive.google.com/drive/folders/1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1
+# Uploaded 20:16–20:17 IST (Asia/Calcutta). New files only; no existing files were overwritten.
+
+kitti_highway_sample_foundation_bev_iter3.mp4	1sFtVQZ2J0KQHDERu3p9KbZU_3anLsUY7	https://drive.google.com/file/d/1sFtVQZ2J0KQHDERu3p9KbZU_3anLsUY7/view?usp=drivesdk
+kitti_highway_exit_approach_foundation_bev_iter3.mp4	1MdDSvZWSs7Ejjyu00zr2a39k6mNlVmTG	https://drive.google.com/file/d/1MdDSvZWSs7Ejjyu00zr2a39k6mNlVmTG/view?usp=drivesdk
+kitti_highway_late_foundation_bev_iter3.mp4	1ANQpbFAT43I3EKAvMzBVVuWceborPD-r	https://drive.google.com/file/d/1ANQpbFAT43I3EKAvMzBVVuWceborPD-r/view?usp=drivesdk
+kitti_highway_final_foundation_bev_iter3.mp4	1KFPntbxRdDkz9_3aEt2-4xAGh0OocpE_	https://drive.google.com/file/d/1KFPntbxRdDkz9_3aEt2-4xAGh0OocpE_/view?usp=drivesdk
+kitti_city_cyclist_candidate_foundation_bev_iter3.mp4	1rwpEq7cgslZBUOPkxSvj_U1pvOhsgAr2	https://drive.google.com/file/d/1rwpEq7cgslZBUOPkxSvj_U1pvOhsgAr2/view?usp=drivesdk
+kitti_lane_split_candidate_foundation_bev_iter3.mp4	1LiSgZcWGJHq2hJUMS-CY8ZeyrFdnU65b	https://drive.google.com/file/d/1LiSgZcWGJHq2hJUMS-CY8ZeyrFdnU65b/view?usp=drivesdk
+munich_foundation_bev_iter3.mp4	1FmeEMR2E-AMxoPq0LJ2bWFa9zsn85OMc	https://drive.google.com/file/d/1FmeEMR2E-AMxoPq0LJ2bWFa9zsn85OMc/view?usp=drivesdk
+a2d2a_foundation_bev_iter3.mp4	1pVgL5rWfzMXTogx2LVqjpsoFTMxhxkn2	https://drive.google.com/file/d/1pVgL5rWfzMXTogx2LVqjpsoFTMxhxkn2/view?usp=drivesdk
+a2d2b_foundation_bev_iter3.mp4	18_AcnNT-CreCzuK9blmOp9d_tc55AIbV	https://drive.google.com/file/d/18_AcnNT-CreCzuK9blmOp9d_tc55AIbV/view?usp=drivesdk

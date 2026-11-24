@@ -1,0 +1,13 @@
+# KITTI_BEV_Test_Videos (1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1)
+# Uploaded 08:21–08:22 IST (Asia/Calcutta), 24 Nov 2026. New files only; no existing files were overwritten.
+# Sharing was not changed. munich and city-cyclist permissions: owner only (no link-sharing). All nine `shared: false`. Sizes match the local copies.
+
+kitti_highway_sample_foundation_bev_iter6.mp4	1MsZkbObMutPn_Qfjw0hBqOwlolYuxIzu	852102	https://drive.google.com/file/d/1MsZkbObMutPn_Qfjw0hBqOwlolYuxIzu/view?usp=drivesdk
+kitti_highway_exit_approach_foundation_bev_iter6.mp4	1bZn7pU8llgJ8BoFG90wLlm2hTei_1JaY	1194995	https://drive.google.com/file/d/1bZn7pU8llgJ8BoFG90wLlm2hTei_1JaY/view?usp=drivesdk
+kitti_highway_late_foundation_bev_iter6.mp4	1clGFu-W5s5tOuFHo1-pfRrm7ZuoB_WpN	1476255	https://drive.google.com/file/d/1clGFu-W5s5tOuFHo1-pfRrm7ZuoB_WpN/view?usp=drivesdk
+kitti_highway_final_foundation_bev_iter6.mp4	1Y-rp4dBpaIK5Zy8aQFt4TnrJOwPRDNAS	976347	https://drive.google.com/file/d/1Y-rp4dBpaIK5Zy8aQFt4TnrJOwPRDNAS/view?usp=drivesdk
+kitti_city_cyclist_candidate_foundation_bev_iter6.mp4	17TraIZgkby-R4RtY6vaRcHvebh_J0RK2	1678286	https://drive.google.com/file/d/17TraIZgkby-R4RtY6vaRcHvebh_J0RK2/view?usp=drivesdk
+kitti_lane_split_candidate_foundation_bev_iter6.mp4	1VH3XDC7T_D6YdkZMzgZ0zbYNlxIQUL1E	1257313	https://drive.google.com/file/d/1VH3XDC7T_D6YdkZMzgZ0zbYNlxIQUL1E/view?usp=drivesdk
+munich_foundation_bev_iter6.mp4	1ItCoDhMLxWuuqylPqb909psLEBND-fP_	23030341	https://drive.google.com/file/d/1ItCoDhMLxWuuqylPqb909psLEBND-fP_/view?usp=drivesdk
+a2d2a_foundation_bev_iter6.mp4	1ekhyySvcSiBVtpJSvgriB7mHht0qiZ1B	2239223	https://drive.google.com/file/d/1ekhyySvcSiBVtpJSvgriB7mHht0qiZ1B/view?usp=drivesdk
+a2d2b_foundation_bev_iter6.mp4	1wJ-IC-MBYlquXz37kGwC4m3gXkUx33W2	2225915	https://drive.google.com/file/d/1wJ-IC-MBYlquXz37kGwC4m3gXkUx33W2/view?usp=drivesdk

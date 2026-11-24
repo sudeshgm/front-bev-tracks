@@ -1,0 +1,28 @@
+# Drive uploads — foundation BEV iter5 (Modal, 24 Nov 2026) — PARTIAL
+# Folder: KITTI_BEV_Test_Videos
+# https://drive.google.com/drive/folders/1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1
+# Uploaded 03:33–03:34 IST (Asia/Calcutta). New files only; no existing files were overwritten.
+# Only the four completed highway clips were uploaded. The other five clips failed in stage 2.
+# Files were uploaded into the existing private folder; sharing was not changed.
+
+kitti_highway_sample_foundation_bev_iter5.mp4	1LdUd6p0uAuVDG5uOLsZ3Ww_Rro9QV0XE	https://drive.google.com/file/d/1LdUd6p0uAuVDG5uOLsZ3Ww_Rro9QV0XE/view?usp=drivesdk
+kitti_highway_exit_approach_foundation_bev_iter5.mp4	1PT4TvkzsBB1qfhb92kZzNpu5IyR0K1y1	https://drive.google.com/file/d/1PT4TvkzsBB1qfhb92kZzNpu5IyR0K1y1/view?usp=drivesdk
+kitti_highway_late_foundation_bev_iter5.mp4	1ZxGlQ4jhqPyqori1675tPeHTtM9_dsuD	https://drive.google.com/file/d/1ZxGlQ4jhqPyqori1675tPeHTtM9_dsuD/view?usp=drivesdk
+kitti_highway_final_foundation_bev_iter5.mp4	108X-PGP3Vtp2fWUW42hrspOJDcntK56F	https://drive.google.com/file/d/108X-PGP3Vtp2fWUW42hrspOJDcntK56F/view?usp=drivesdk
+
+# NOT uploaded (clip failed, no video):
+# kitti_city_cyclist_candidate_foundation_bev_iter5.mp4
+# kitti_lane_split_candidate_foundation_bev_iter5.mp4
+# munich_foundation_bev_iter5.mp4
+# a2d2a_foundation_bev_iter5.mp4
+# a2d2b_foundation_bev_iter5.mp4
+
+# iter5b uploaded 04:17–04:18 IST (Asia/Calcutta), 24 Nov 2026. New files only; no existing files were overwritten.
+# Files were uploaded into the existing private folder KITTI_BEV_Test_Videos (1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1).
+# Sharing was not changed. munich and city-cyclist permissions: owner only (no link-sharing). All five `shared: false`. Sizes match the local copies.
+
+kitti_city_cyclist_candidate_foundation_bev_iter5b.mp4	1q6SW5D7cRsJSgudX9vDTmiXzo5-J8iVz	1638919	https://drive.google.com/file/d/1q6SW5D7cRsJSgudX9vDTmiXzo5-J8iVz/view?usp=drivesdk
+kitti_lane_split_candidate_foundation_bev_iter5b.mp4	1pc3HWpZ0WlC4Z1SnYdgkh9VBgXYcsYJl	1330882	https://drive.google.com/file/d/1pc3HWpZ0WlC4Z1SnYdgkh9VBgXYcsYJl/view?usp=drivesdk
+munich_foundation_bev_iter5b.mp4	17RfgoZgTdoDxLr1A8U83ZHoMVJuepe0q	23322208	https://drive.google.com/file/d/17RfgoZgTdoDxLr1A8U83ZHoMVJuepe0q/view?usp=drivesdk
+a2d2a_foundation_bev_iter5b.mp4	1VkvriA0b1ZeMEMqTeSHz8vcmh1MAF0aY	2267238	https://drive.google.com/file/d/1VkvriA0b1ZeMEMqTeSHz8vcmh1MAF0aY/view?usp=drivesdk
+a2d2b_foundation_bev_iter5b.mp4	1I0tvfc9f-2aGu1YNwTpUMtJaq9UXZQDW	2267526	https://drive.google.com/file/d/1I0tvfc9f-2aGu1YNwTpUMtJaq9UXZQDW/view?usp=drivesdk
