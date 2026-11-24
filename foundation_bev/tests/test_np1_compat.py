@@ -63,3 +63,19 @@ def test_iter7_robust_kf_update_limits_outlier_pull():
     tr.step(8, [dict(d(24.0), bev=(-15.0, 34.5 - 8.0 * 8 / 10.0 * 0))])  # 10 m depth jump, same box
     after = float(t["kf"].x[1])
     assert abs(after - before) < 3.0, (before, after)
+
+
+
+def test_iter8_far_model_only_in_final_pass():
+    import bev_smooth as BS
+    a = BS._KF(-12.0, 24.0, "car", 0.1); b = BS._KF(-12.0, 24.0, "car", 0.1, final=True)
+    for kf in (a, b):
+        kf.predict()
+        kf.update(-15.0, 30.0, 30.0, "wd3d")  # a2d2a-style range jump along the ray at 30 m
+    pull = lambda kf: float(np.hypot(kf.x[0] + 12.0, kf.x[1] - 24.0))
+    assert pull(b) < pull(a)                 # the final pass trusts the far range jump less
+    c = BS._KF(1.0, 8.0, "car", 0.1); d = BS._KF(1.0, 8.0, "car", 0.1, final=True)
+    for kf in (c, d):
+        kf.predict(); kf.update(1.2, 8.3, 8.3, "wd3d")
+    assert np.allclose(c.x, d.x)             # near tracks (< 18 m, inside 2 sigma): identical
+    assert BS.far_weight(10.0) == 0.0 and BS.far_weight(30.0) == 1.0

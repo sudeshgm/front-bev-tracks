@@ -206,11 +206,15 @@ def meas_sigma(z, src="ground"):
 
 
 class _KF:
-    def __init__(self, x, s, cls, dt):
+    def __init__(self, x, s, cls, dt, final=False):
         self.x = np.array([x, s, 0.0, 0.0])
         self.P = np.diag([1.0, 4.0, 4.0, 16.0])
         self.cls = cls
         self.dt = dt
+        # iter8: final=True only in the last smoothing pass of finalize(). The far-range measurement model and the
+        # tighter robust gate apply there; online association and re-link keep the iter7 model, so track IDs,
+        # fragments and relinks are unchanged and only the smoothed (drawn / scored) positions differ.
+        self.final = final
 
     def FQ(self, steps=1):
         dt = self.dt * steps
@@ -234,15 +238,30 @@ class _KF:
         # iter7: monocular range error lies along the viewing ray, not along ego z. For off-axis cars
         # (a2d2a track 30, bearing ~-30 deg) an axis-aligned R let a 4 m range jump drag x by ~3 m.
         th = float(np.arctan2(zx, max(float(z_ego), 0.5)))  # bearing in the ego frame (zs is world z)
-        th *= float(np.clip((abs(th) - RAY_R_DEG0) / RAY_R_DEG0, 0.0, 1.0)) * RAY_R  # only off-axis (>10 deg, full by 20 deg)
+        w_far = far_weight(z_ego) if self.final else 0.0  # iter8: 0 below FAR_Z0, 1 beyond FAR_Z0 + FAR_RAMP
+        ray = max(RAY_R, w_far if FAR_MODE in ("ray", "both") else 0.0)
+        th *= float(np.clip((abs(th) - RAY_R_DEG0) / RAY_R_DEG0, 0.0, 1.0)) * ray  # only off-axis (> RAY_R_DEG0, full by 2x)
+        if FAR_MODE in ("inflate", "both"):
+            # far range is correlated frame to frame: trust it less, but never beyond FAR_LON_MAX (iter8 CPU smoke:
+            # uncapped, a 54 m car on kitti_highway_late got sigma 14 m, its 32 m outlier was no longer rejected
+            # and the smoothed track slid 20 m toward the ego)
+            lon_g, lon = lon, max(lon, min(lon * (1.0 + FAR_K * w_far), FAR_LON_MAX))
+        else:
+            lon_g = lon
         al = np.array([np.sin(th), np.cos(th)]); pe = np.array([np.cos(th), -np.sin(th)])
         R = (lat * m[1]) ** 2 * np.outer(pe, pe) + (lon * m[2]) ** 2 * np.outer(al, al)
         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
         y = np.array([zx, zs]) - H @ self.x
         S = H @ self.P @ H.T + R
         d2 = float(y @ np.linalg.solve(S, y))
-        if d2 > ROBUST_NIS:  # iter7: down-weight outlier measurements (a2d2a track 30: 4 m depth jumps at x=-15 m)
-            R = R * (d2 / ROBUST_NIS)
+        nis = ROBUST_NIS_FINAL if self.final else ROBUST_NIS
+        if FAR_GATE_BASE and lon_g != lon:
+            # iter8: outliers are judged with the un-inflated range sigma, so inflating far R never lets a range
+            # outlier through (kitti_highway_late CPU smoke: a 32 m reading on a 54 m car pulled the track 20 m)
+            Rg = (lat * m[1]) ** 2 * np.outer(pe, pe) + (lon_g * m[2]) ** 2 * np.outer(al, al)
+            d2 = float(y @ np.linalg.solve(H @ self.P @ H.T + Rg, y))
+        if d2 > nis:  # iter7: down-weight outlier measurements (a2d2a track 30: 4 m depth jumps at x=-15 m)
+            R = R * (d2 / nis)
             S = H @ self.P @ H.T + R
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
@@ -253,8 +272,52 @@ class _KF:
 # opt-in (FBEV_RAY_R=1): CPU replay a2d2a accel 0.807 -> 0.757 (track 30/43: 2.28 -> 1.89), but it fails the synthetic
 # relink/stationary test (test_bev_smooth.test_relink), so it is OFF by default until validated on GPU dets
 RAY_R = 1.0 if os.environ.get("FBEV_RAY_R", "0") == "1" else 0.0
-RAY_R_DEG0 = float(np.radians(10.0))  # iter7: ray-aligned R ramps in between 10 and 20 deg of bearing
-ROBUST_NIS = 9.0  # iter7: 3-sigma; beyond it R is inflated so the update stays within ~3 sigma
+RAY_R_DEG0 = float(np.radians(float(os.environ.get("FBEV_RAY_DEG0", "15.0"))))  # ray-aligned R ramps in between DEG0 and 2*DEG0 of bearing (iter7 10, iter8 15)
+ROBUST_NIS = 9.0  # iter7: 3-sigma; beyond it R is inflated so the update stays within ~3 sigma (online + relink)
+# iter8: final smoothing pass gate. 9 (= online). Tighter gates (4, 6) lowered accel but pulled smoothed tracks away
+# from the measurements (GPU-track replay: kitti_highway_final p90 residual 4.7 -> 6.4 m at 4), so they stay opt-in.
+ROBUST_NIS_FINAL = float(os.environ.get("FBEV_ROBUST_NIS", "9.0"))
+
+# iter8 (target d): a2d2a far car (GPU iter7 track 31, x -12 m, z 19-25 m) has 4-5 m range jumps lasting several
+# frames. Range-gated measurement model, far tracks only: FBEV_FAR_MODE = off | ray | inflate | both.
+# Default "ray": in the final pass, range noise of far (z > 12 m, full by 18 m), off-axis (bearing > 15 deg, full by
+# 30 deg) cars lies along the viewing ray. GPU-track replay: a2d2a track 31 accel 1.84 -> ~0.5 with unchanged
+# residual to the measurements. "inflate"/"both" (range sigma x (1 + FAR_K)) looked better on accel but let the
+# smoothed tracks drift 5-10 m from the data on the KITTI highways (it just stops following the measurements): off.
+FAR_MODE = os.environ.get("FBEV_FAR_MODE", "ray")
+FAR_Z0 = float(os.environ.get("FBEV_FAR_Z0", "12.0"))
+FAR_RAMP = float(os.environ.get("FBEV_FAR_RAMP", "6.0"))
+FAR_K = float(os.environ.get("FBEV_FAR_K", "2.0"))
+FAR_LON_MAX = float(os.environ.get("FBEV_FAR_LON_MAX", "99.0"))  # m, cap on the inflated range sigma (inflate/both modes only)
+FAR_GATE_BASE = os.environ.get("FBEV_FAR_GATE", "base") == "base"  # base | infl: which range sigma the outlier gate uses
+
+
+def far_weight(z_ego):
+    if FAR_MODE == "off" or z_ego is None:
+        return 0.0
+    return float(np.clip((float(z_ego) - FAR_Z0) / max(FAR_RAMP, 1e-3), 0.0, 1.0))
+
+
+# iter8 (target c): the tracker world frame moves at the PRIOR ego speed, so a parked car is "moving" whenever the
+# selected speed differs (lane_split prior 18 vs 4.7 m/s) and is never flagged stationary; its stage-1 jitter then
+# lands in accel_rms. After ego selection, re-test stationarity in the TRUE world frame and pin it there.
+REPIN = os.environ.get("FBEV_REPIN", "0") == "1"  # off: no effect on the GPU-track replay (lane_split parked cars sweep sideways with ego yaw, so they never test static)
+REPIN_MPS = float(os.environ.get("FBEV_REPIN_MPS", "0.8"))
+
+
+def repin_true_world(pos, vel, frames, fps, prior, sel, thr=None):
+    """pos/vel in the prior world frame (rows of the RTS output). Returns (pos, stationary)."""
+    thr = REPIN_MPS if thr is None else thr
+    frames = np.asarray(frames, float)
+    v = np.asarray(vel, float).copy()
+    v[:, 1] -= (prior - sel)  # world velocity w.r.t. the selected ego speed
+    if len(frames) < 8 or np.median(np.linalg.norm(v, axis=1)) >= thr:
+        return pos, False
+    corr = (prior - sel) * frames / fps  # prior world z = true world z + (prior - sel) * t
+    zt = pos[:, 1] - corr
+    out = pos.copy()
+    out[:, 0] = np.median(pos[:, 0]); out[:, 1] = np.median(zt) + corr
+    return out, True
 
 
 class ObjTracker:
@@ -369,10 +432,10 @@ class ObjTracker:
             Ps[k] = Ps[k] + C @ (Ps[k + 1] - Pp) @ C.T
         return np.array(xs)
 
-    def _refilter(self, hist, cls):
+    def _refilter(self, hist, cls, final=False):
         """Re-run the Kalman over a (possibly merged) measurement list so F/Q/Pp are consistent."""
         first = hist[0]
-        kf = _KF(first["meas"][0], first["meas"][1], cls, self.dt)
+        kf = _KF(first["meas"][0], first["meas"][1], cls, self.dt, final=final)
         out = [dict(first, xf=kf.x.copy(), Pf=kf.P.copy(), xp=kf.x.copy(), Pp=kf.P.copy(), F=kf.FQ()[0], Q=kf.FQ()[1])]
         byf = {h["frame"]: h for h in hist}
         for f in range(first["frame"] + 1, hist[-1]["frame"] + 1):
@@ -387,6 +450,17 @@ class ObjTracker:
             rec.update(xf=kf.x.copy(), Pf=kf.P.copy(), xp=xp, Pp=Pp, F=F, Q=Q)
             out.append(rec)
         return out
+
+    def _smooth_final(self, meas, cls, stationary_mps=0.8):
+        """iter8: the stationary decision (and a stationary track's pinned position) comes from the iter7 model;
+        a moving track's smoothed path comes from the final-pass model (far-range R + 2-sigma robust gate)."""
+        hist0 = self._refilter(meas, cls)
+        xs0 = self._rts(hist0)
+        stationary = bool(np.median(np.linalg.norm(xs0[:, 2:], axis=1)) < stationary_mps)
+        if stationary or (FAR_MODE == "off" and ROBUST_NIS_FINAL == ROBUST_NIS):
+            return hist0, xs0, stationary
+        hist = self._refilter(meas, cls, final=True)
+        return hist, self._rts(hist), False
 
     def finalize(self, stationary_mps=0.8):
         tracks = [self._trim(t) for t in self.done + self.active]
@@ -452,11 +526,8 @@ class ObjTracker:
             meas = [h for h in t["hist"] if h["meas"] is not None]
             if len(meas) < self.min_len:
                 continue
-            hist = self._refilter(meas, t["cls"])
-            xs = self._rts(hist)
+            hist, xs, stationary = self._smooth_final(meas, t["cls"], stationary_mps)
             pos = xs[:, :2]
-            vel = np.linalg.norm(xs[:, 2:], axis=1)
-            stationary = bool(np.median(vel) < stationary_mps)
             if stationary:
                 pos = np.repeat(np.median(pos, 0, keepdims=True), len(pos), 0)
             rows = []

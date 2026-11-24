@@ -558,12 +558,24 @@ def _longest_run(mask, min_n):
     return best if best[1] - best[0] >= min_n else None
 
 
-def trim_edge(x, side, lanes, max_deg=float(os.environ.get("FBEV_EDGE_MAX_DEG", 25.0)), z_near=20.0, tol=0.5,
-              min_len_m=4.0):
-    """iter7: instead of dropping a whole edge (iter6, 15 deg), remove only the bad samples:
-    (a) samples on the inner side of a tracked lane line by > tol (diagonal lane-crossing part), and
-    (b) near-ego samples (z <= z_near) whose local heading departs > max_deg from the road heading.
-    Keep the longest remaining contiguous run (>= min_len_m); None if nothing is left."""
+EDGE_CONV_DEG = float(os.environ.get("FBEV_EDGE_MAX_DEG", 30.0))      # iter8: converging (toward the lanes) limit
+EDGE_DIV_DEG = float(os.environ.get("FBEV_EDGE_DIVERGE_DEG", 45.0))   # iter8: diverging (away from the road) limit; 60 -> munich R 94.1 but keeps 45-60 deg corner flares
+EGO_HALF_M = float(os.environ.get("FBEV_EDGE_EGO_HALF_M", 1.2))       # iter8: an edge never enters the ego corridor
+
+
+def trim_edge(x, side, lanes, max_deg=None, z_near=20.0, tol=0.5, min_len_m=4.0, div_deg=None, ego_half=None):
+    """iter7: instead of dropping a whole edge, remove only the bad samples. iter8 rules:
+    (a) lane crossing: an edge that starts outside a tracked lane line and passes > tol to its inner side is
+        invalid from the first crossing sample ON (iter7 kept the longest run, which on lane_split f23-29 was the
+        far diagonal part through the ego lane, and dropped the good near part);
+    (b) ego corridor: samples with side*x < ego_half are bad (an edge cannot run through the ego lane);
+    (c) heading, near ego (z <= z_near), split by direction w.r.t. the road heading: CONVERGING with distance
+        (toward the lanes, the lane_split / munich-L diagonal) > max_deg (30) is bad; DIVERGING (away from the
+        road: junction, driveway, kerb flare; 199 munich-R frames at 30-55 deg, none crossing a lane) only > div_deg (45);
+    then keep the NEAREST remaining run >= min_len_m (None if there is none)."""
+    max_deg = EDGE_CONV_DEG if max_deg is None else max_deg
+    div_deg = EDGE_DIV_DEG if div_deg is None else div_deg
+    ego_half = EGO_HALF_M if ego_half is None else ego_half
     x = np.asarray(x, float).copy()
     f = np.isfinite(x)
     if f.sum() < 4:
@@ -579,18 +591,57 @@ def trim_edge(x, side, lanes, max_deg=float(os.environ.get("FBEV_EDGE_MAX_DEG", 
         # beyond the edge (parking / kerb paint, munich and a2d2) must not trim it
         if np.median((x[idx[:4]] - lx[idx[:4]]) * side) <= 0:
             continue
-        bad |= both & ((x - lx) * side < -tol)
+        cross = both & ((x - lx) * side < -tol)
+        ci = np.flatnonzero(cross)
+        if len(ci) >= 2:  # 2 samples (1 m) to ignore a single noisy sample
+            bad[ci[0]:] = True
+        else:
+            bad |= cross
+    bad |= f & (x * side < ego_half)
     la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
     ref = np.radians(float(np.median(la))) if la else 0.0
     xs = np.where(f, x, np.interp(ZS, ZS[f], x[f]))
-    ang = np.arctan(np.gradient(xs, ZS))
-    bad |= f & (ZS <= z_near) & (np.degrees(np.abs(ang - ref)) > max_deg)
-    run = _longest_run(f & ~bad, int(round(min_len_m / (ZS[1] - ZS[0]))))
+    dev = np.degrees(np.arctan(np.gradient(xs, ZS)) - ref) * side  # > 0: diverging (moving outward with distance)
+    near = f & (ZS <= z_near)
+    bad |= near & (((dev < 0) & (-dev > max_deg)) | ((dev > 0) & (dev > div_deg)))
+    run = _nearest_run(f & ~bad, int(round(min_len_m / (ZS[1] - ZS[0]))))
     if run is None:
         return None
     out = np.full(len(ZS), np.nan)
     out[run[0]:run[1]] = x[run[0]:run[1]]
     return out
+
+
+def is_flared(x, side, lanes, max_deg=None, z_near=20.0):
+    """iter8: True if the kept edge uses the diverging allowance (near-ego heading > max_deg AWAY from the road).
+    Such a main edge must not seed a split_in-vs-main fork gore (re5 munich f587-593 fired once flares were kept)."""
+    max_deg = EDGE_CONV_DEG if max_deg is None else max_deg
+    if x is None:
+        return False
+    x = np.asarray(x, float); f = np.isfinite(x)
+    if f.sum() < 4:
+        return False
+    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
+    ref = np.radians(float(np.median(la))) if la else 0.0
+    xs = np.where(f, x, np.interp(ZS, ZS[f], x[f]))
+    dev = np.degrees(np.arctan(np.gradient(xs, ZS)) - ref) * side
+    return bool((f & (ZS <= z_near) & (dev > max_deg)).any())
+
+
+def _nearest_run(mask, min_n):
+    """iter8: first (nearest-to-ego) contiguous True run of at least min_n samples, as (start, stop)."""
+    i, n = 0, len(mask)
+    while i < n:
+        if mask[i]:
+            j = i
+            while j < n and mask[j]:
+                j += 1
+            if j - i >= min_n:
+                return i, j
+            i = j
+        else:
+            i += 1
+    return None
 
 
 def suppress_edge_duplicates(lanes, edges, d_max=None, frac=0.7, min_n=12):
@@ -626,6 +677,23 @@ def suppress_edge_duplicates(lanes, edges, d_max=None, frac=0.7, min_n=12):
     return keep
 
 
+def retrim_held(h, cur, side, lanes):
+    """iter8: held / filled geometry must pass trim_edge too, and a fill may only ADD samples: if re-trimming the
+    filled edge loses any sample the current (trimmed) edge measured, the current edge is used unfilled
+    (city f23: an old near-ego fill crossed a lane and, with crossing-invalidates-beyond, cost the whole edge)."""
+    if h is None or not (h.get("hold_filled") or h.get("held")):
+        return h
+    xt = trim_edge(h["xg"], side, lanes)
+    if cur is not None:
+        cx = xg_of(cur)
+        if xt is None or (np.isfinite(cx) & ~np.isfinite(xt)).any():
+            return cur
+    if xt is None:
+        return None
+    fz = ZS[np.isfinite(xt)]
+    return dict(h, xg=xt, zmin=float(fz.min()), zmax=float(fz.max()))
+
+
 class EdgeHold:
     """iter7: temporal hold per edge role. The last accepted edge is shifted by the ego travel ds
     (x_new(z) = x_old(z + ds)) and kept per sample for up to max_age frames, with confidence decay**age.
@@ -633,8 +701,13 @@ class EdgeHold:
     - edge present but trimmed / short: its missing samples are filled from the propagated edge, so the
       near-ego part removed by trim_edge is bridged by the last good geometry instead of disappearing."""
 
-    def __init__(self, max_age=5, decay=0.8):
-        self.max_age, self.decay, self.last = max_age, decay, {}
+    def __init__(self, max_age=None, decay=0.8, fps=10.0):
+        # iter8: hold for a fixed TIME (FBEV_EDGE_HOLD_S, 0.5 s), not 5 frames: 5 frames is 0.5 s at 10 Hz but only
+        # 0.17 s on munich (30 Hz), where 169 held frames still left 246 frames without a right edge.
+        hold_s = float(os.environ.get("FBEV_EDGE_HOLD_S", 0.5))
+        self.max_age = max_age if max_age is not None else max(5, int(round(hold_s * fps)))
+        self.decay = decay ** (5.0 / self.max_age)  # same confidence at the end of the hold
+        self.last = {}
 
     @staticmethod
     def _shift(x, ds):
@@ -748,7 +821,7 @@ def fork_gores(lanes, edges, min_gap=1.0, max_gap=4.0, lane_edge=True):
             pairs.append((by_id[r["parent"]]["xg"], r["xg"]))
     mains = {e["side"]: e for e in edges if e.get("role") in ("main_L", "main_R")}
     for e in edges:
-        if e.get("role") == "split_in" and e["side"] in mains:
+        if e.get("role") == "split_in" and e["side"] in mains and not mains[e["side"]].get("flare"):  # iter8
             pairs.append((mains[e["side"]]["xg"], e["xg"]))
     # lane vs its side's main edge (exit lane opening between the through-lane line and the widening edge)
     for sd, e in (mains.items() if lane_edge else ()):
@@ -795,14 +868,14 @@ def fork_gores(lanes, edges, min_gap=1.0, max_gap=4.0, lane_edge=True):
 class StageLines:
     """Per-clip lane / edge / gore tracking on BEV masks (road: drivable, paint: markings)."""
 
-    def __init__(self):
+    def __init__(self, fps=10.0):
         self.lanes = MultiLineTracker("lane", alpha=0.25)  # iter5: 0.4 -> 0.25
         self.edges = {r: MultiLineTracker("edge", n_birth=3, n_death=4, gate_max=2.0, alpha=0.2)
                       for r in ("main_L", "main_R", "split_in", "split_out")}
         self.gore = GoreTracker(n_birth=3)  # iter6: stripe gores need 3 frames
         self.div = DivergenceGore()
         self.n_split_frames = 0
-        self.hold = EdgeHold()
+        self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
 
     def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0):
         comps = components(paint_bev, res)
@@ -834,9 +907,9 @@ class StageLines:
         for role, sd in (("main_L", -1), ("main_R", 1)):  # iter7 temporal hold (+ fill of trimmed samples)
             cur = [e for e in edges if e.get("role") == role]
             h = self.hold.step(role, cur[0] if cur else None, ds)
-            if h is not None and h.get("hold_filled") or (h is not None and h.get("held")):
-                xt = trim_edge(h["xg"], sd, lanes)  # held / filled geometry must not cross a lane either
-                h = dict(h, xg=xt) if xt is not None else (cur[0] if cur else None)
+            h = retrim_held(h, cur[0] if cur else None, sd, lanes)
+            if h is not None:
+                h["flare"] = is_flared(h.get("xg"), sd, lanes)
             if cur:
                 edges[edges.index(cur[0])] = h
             elif h is not None:

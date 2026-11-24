@@ -1,0 +1,36 @@
+kitti_lane_split_candidate it7 pooled 1.048 n 224
+   rms 1.75 n 28 sumsq 86.0 tid 6 f0-29 x4.5 z12.3
+   rms 1.44 n 28 sumsq 58.3 tid 7 f0-29 x4.1 z14.7
+   rms 1.33 n 28 sumsq 49.8 tid 5 f0-29 x-1.2 z18.3
+   rms 0.93 n 21 sumsq 18.2 tid 9 f3-25 x4.4 z19.3
+   rms 0.79 n 23 sumsq 14.4 tid 10 f4-28 x2.0 z23.2
+kitti_lane_split_candidate it8 pooled 0.951 n 224
+   rms 1.48 n 28 sumsq 61.1 tid 6 f0-29 x4.6 z12.3
+   rms 1.33 n 28 sumsq 49.8 tid 5 f0-29 x-1.2 z18.3
+   rms 1.24 n 28 sumsq 42.8 tid 7 f0-29 x4.1 z14.5
+   rms 0.85 n 21 sumsq 15.2 tid 9 f3-25 x4.4 z19.1
+   rms 0.80 n 23 sumsq 14.6 tid 10 f4-28 x2.0 z23.2
+a2d2b it7 pooled 0.879 n 125
+   rms 1.58 n 36 sumsq 90.4 tid 8 f63-100 x-4.3 z11.8
+   rms 0.44 n 11 sumsq 2.2 tid 4 f42-54 x-3.1 z9.4
+   rms 0.31 n 11 sumsq 1.0 tid 2 f12-24 x-3.2 z9.9
+   rms 0.30 n 8 sumsq 0.7 tid 9 f66-75 x3.4 z9.5
+   rms 0.24 n 10 sumsq 0.6 tid 7 f56-67 x-3.1 z9.4
+a2d2b it8 pooled 0.821 n 125
+   rms 1.47 n 36 sumsq 78.0 tid 8 f63-100 x-4.3 z11.7
+   rms 0.44 n 11 sumsq 2.2 tid 4 f42-54 x-3.1 z9.4
+   rms 0.31 n 11 sumsq 1.0 tid 2 f12-24 x-3.2 z9.9
+   rms 0.30 n 8 sumsq 0.7 tid 9 f66-75 x3.4 z9.5
+   rms 0.24 n 10 sumsq 0.6 tid 7 f56-67 x-3.1 z9.4
+a2d2a it7 pooled 0.775 n 637
+   rms 1.84 n 62 sumsq 209.4 tid 31 f107-170 x-12.0 z21.4
+   rms 0.85 n 82 sumsq 59.6 tid 23 f88-171 x-3.6 z9.5
+   rms 0.74 n 79 sumsq 43.5 tid 25 f91-171 x-0.3 z10.5
+   rms 1.01 n 40 sumsq 40.4 tid 33 f114-155 x-8.8 z16.6
+   rms 0.58 n 24 sumsq 8.0 tid 22 f88-113 x3.0 z11.0
+a2d2a it8 pooled 0.495 n 637
+   rms 0.85 n 82 sumsq 59.6 tid 23 f88-171 x-3.6 z9.5
+   rms 0.74 n 79 sumsq 43.5 tid 25 f91-171 x-0.3 z10.5
+   rms 0.56 n 40 sumsq 12.5 tid 33 f114-155 x-8.7 z16.4
+   rms 0.43 n 62 sumsq 11.5 tid 31 f107-170 x-12.1 z21.3
+   rms 0.58 n 24 sumsq 8.0 tid 22 f88-113 x3.0 z11.0

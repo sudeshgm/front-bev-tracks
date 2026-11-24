@@ -182,10 +182,11 @@ def test_iter7_trim_edge_keeps_good_part():
     assert np.all(t[np.isfinite(t)] <= -1.75 + 0.5)
     # paint lying BEYOND the edge (parking line at x=-6.5) must not trim it
     assert np.isfinite(LM.trim_edge(straight, -1, [_r(np.full(len(Z), -6.5))])).sum() == np.isfinite(straight).sum()
-    # 30 deg near-ego heading with no lanes: trimmed near part, 25 deg gate
+    # iter8: a near-ego bend toward the ego is cut where it enters the ego corridor (|x| < 1.2 m), the rest is kept
     bent = np.where(Z < 15, -5.0 + (15 - Z) * np.tan(np.radians(30)), -5.0)
     t2 = LM.trim_edge(bent, -1, [])
-    assert t2 is not None and np.nanmin(LM.ZS[np.isfinite(t2)]) >= 14.0
+    kept = np.isfinite(t2)
+    assert t2 is not None and np.all(t2[kept] <= -1.2) and kept[LM.ZS >= 10].all()
 
 
 def test_iter7_edge_hold_propagates_and_fills():
@@ -212,3 +213,70 @@ def test_iter7_lane_duplicating_edge_suppressed_but_nearest_kept():
     assert ids == {1}
     ids = {r["id"] for r in LM.suppress_edge_duplicates([dup], [edge])}  # nearest on its side -> kept
     assert ids == {2}
+
+
+# ---------------------------------------------------------------- iter8
+
+
+def test_iter8_crossing_invalidates_beyond_and_keeps_near_part():
+    """lane_split f23 (iter7 GPU): right edge 4.4 m at z 8 -> 0 m at z 30, crossing the lane at 4.2 m near z 9.
+    iter7 kept the far diagonal (longest run); iter8 keeps the near part and nothing beyond the crossing."""
+    Z = LM.ZS
+    lane = _r(np.where(Z <= 20, 4.2, np.nan))
+    edge = np.where(Z >= 8, 4.4 - (Z - 8) * 0.2, np.nan)
+    t = LM.trim_edge(edge, 1, [lane], min_len_m=1.0)
+    kept = LM.ZS[np.isfinite(t)]
+    assert kept.min() == 8.0 and kept.max() < 12.0  # crossing (> 0.5 m inside the lane) starts at z 12
+    import importlib.util, os
+    p7 = os.path.join(os.path.dirname(__file__), "..", "..", "iter7_spec", "src", "lines_mt.py")
+    if os.path.exists(p7):  # the iter7 rule kept the far diagonal instead
+        sp = importlib.util.spec_from_file_location("lm7", p7); lm7 = importlib.util.module_from_spec(sp); sp.loader.exec_module(lm7)
+        k7 = LM.ZS[np.isfinite(lm7.trim_edge(edge, 1, [lane]))]
+        assert k7.min() > 12.0
+
+
+def test_iter8_ego_corridor_and_direction_aware_heading():
+    Z = LM.ZS
+    # converging 35 deg (toward the lanes with distance) near ego: trimmed (limit 30)
+    conv = np.where(Z <= 20, 5.0 - (Z - 5.0) * np.tan(np.radians(35)), np.nan) + 0.0
+    conv = np.where(np.isfinite(conv), conv + 0.0, np.nan)
+    t = LM.trim_edge(np.where(Z <= 20, 8.0 - (Z - 5.0) * np.tan(np.radians(35)), np.nan), 1, [])
+    assert t is None or np.isfinite(t).sum() <= 2
+    # diverging 40 deg (munich-R corner flare, away from the road): kept (limit 45) and flagged as a flare
+    div40 = np.where(Z <= 20, 3.0 + (Z - 5.0) * np.tan(np.radians(40)), np.nan)
+    t40 = LM.trim_edge(div40, 1, [])
+    assert t40 is not None and np.isfinite(t40).sum() == np.isfinite(div40).sum()
+    assert LM.is_flared(t40, 1, []) and not LM.is_flared(np.full(len(Z), 5.0), 1, [])
+    # diverging 50 deg: trimmed
+    div50 = np.where(Z <= 20, 3.0 + (Z - 5.0) * np.tan(np.radians(50)), np.nan)
+    assert LM.trim_edge(div50, 1, []) is None
+    # an edge inside the ego corridor is never kept
+    assert LM.trim_edge(np.full(len(Z), 0.8), 1, []) is None
+
+
+def test_iter8_hold_is_time_based():
+    assert LM.EdgeHold(fps=10.0).max_age == 5
+    assert LM.EdgeHold(fps=30.0).max_age == 15  # munich: 0.5 s instead of 0.17 s
+    h = LM.EdgeHold(fps=30.0)
+    h.step("main_R", _r(np.full(len(LM.ZS), 5.0), role="main_R"), 0.4)
+    outs = [h.step("main_R", None, 0.4) for _ in range(16)]
+    assert all(o is not None and o["held"] for o in outs[:15]) and outs[15] is None
+
+
+def test_iter8_fill_may_not_cost_measured_samples():
+    """city f23: an old fill that crosses a lane must not remove the current, valid edge."""
+    Z = LM.ZS
+    lane = _r(np.full(len(Z), -4.2))
+    cur = _r(np.where(Z >= 10, -7.4, np.nan), role="main_L")
+    filled = dict(cur, xg=np.where(Z >= 10, -7.4, -3.0), hold_filled=10)  # near fill inside the lane at -4.2
+    out = LM.retrim_held(filled, cur, -1, [lane])
+    assert out is cur
+
+
+def test_iter8_flared_main_edge_seeds_no_split_fork():
+    Z = LM.ZS
+    main = dict(_r(np.full(len(Z), 6.0), role="main_R"), side=1)
+    split = dict(_r(np.where(Z >= 8, 6.0 + (Z - 8) * 0.25, np.nan), role="split_in"), side=1)
+    assert LM.fork_gores([], [main, split], lane_edge=False)
+    main["flare"] = True
+    assert not LM.fork_gores([], [main, split], lane_edge=False)
