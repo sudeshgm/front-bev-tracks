@@ -20,6 +20,7 @@ import math
 from collections import defaultdict
 
 import cv2
+import os
 import numpy as np
 
 try:
@@ -230,14 +231,30 @@ class _KF:
     def update(self, zx, zs, z_ego, src):
         lat, lon = meas_sigma(z_ego, src)
         m = CLASS_NOISE.get(self.cls, CLASS_NOISE["car"])
-        R = np.diag([(lat * m[1]) ** 2, (lon * m[2]) ** 2])
+        # iter7: monocular range error lies along the viewing ray, not along ego z. For off-axis cars
+        # (a2d2a track 30, bearing ~-30 deg) an axis-aligned R let a 4 m range jump drag x by ~3 m.
+        th = float(np.arctan2(zx, max(float(z_ego), 0.5)))  # bearing in the ego frame (zs is world z)
+        th *= float(np.clip((abs(th) - RAY_R_DEG0) / RAY_R_DEG0, 0.0, 1.0)) * RAY_R  # only off-axis (>10 deg, full by 20 deg)
+        al = np.array([np.sin(th), np.cos(th)]); pe = np.array([np.cos(th), -np.sin(th)])
+        R = (lat * m[1]) ** 2 * np.outer(pe, pe) + (lon * m[2]) ** 2 * np.outer(al, al)
         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
         y = np.array([zx, zs]) - H @ self.x
         S = H @ self.P @ H.T + R
+        d2 = float(y @ np.linalg.solve(S, y))
+        if d2 > ROBUST_NIS:  # iter7: down-weight outlier measurements (a2d2a track 30: 4 m depth jumps at x=-15 m)
+            R = R * (d2 / ROBUST_NIS)
+            S = H @ self.P @ H.T + R
         K = self.P @ H.T @ np.linalg.inv(S)
         self.x = self.x + K @ y
         self.P = (np.eye(4) - K @ H) @ self.P
         return float(y @ np.linalg.solve(S, y))
+
+
+# opt-in (FBEV_RAY_R=1): CPU replay a2d2a accel 0.807 -> 0.757 (track 30/43: 2.28 -> 1.89), but it fails the synthetic
+# relink/stationary test (test_bev_smooth.test_relink), so it is OFF by default until validated on GPU dets
+RAY_R = 1.0 if os.environ.get("FBEV_RAY_R", "0") == "1" else 0.0
+RAY_R_DEG0 = float(np.radians(10.0))  # iter7: ray-aligned R ramps in between 10 and 20 deg of bearing
+ROBUST_NIS = 9.0  # iter7: 3-sigma; beyond it R is inflated so the update stays within ~3 sigma
 
 
 class ObjTracker:

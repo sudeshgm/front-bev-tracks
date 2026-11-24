@@ -535,6 +535,149 @@ def crosses_lane(x, lanes, tol=0.5, min_n=6):
     return False
 
 
+def xg_of(r):
+    """x on ZS for a line record (lines_mt 'xg', else the legacy poly 'c' over zmin..zmax)."""
+    if r.get("xg") is not None:
+        return np.asarray(r["xg"], float)
+    c = np.asarray(r.get("c", [0, 0, 0]), float)
+    x = c[0] + c[1] * ZS + (c[2] * ZS ** 2 if len(c) > 2 else 0.0)
+    return np.where((ZS >= r.get("zmin", 0)) & (ZS <= r.get("zmax", 0)), x, np.nan)
+
+
+def _longest_run(mask, min_n):
+    best, cur, bs = (0, 0), 0, 0
+    for i, m in enumerate(mask):
+        if m:
+            if cur == 0:
+                bs = i
+            cur += 1
+            if cur > best[1] - best[0]:
+                best = (bs, i + 1)
+        else:
+            cur = 0
+    return best if best[1] - best[0] >= min_n else None
+
+
+def trim_edge(x, side, lanes, max_deg=float(os.environ.get("FBEV_EDGE_MAX_DEG", 25.0)), z_near=20.0, tol=0.5,
+              min_len_m=4.0):
+    """iter7: instead of dropping a whole edge (iter6, 15 deg), remove only the bad samples:
+    (a) samples on the inner side of a tracked lane line by > tol (diagonal lane-crossing part), and
+    (b) near-ego samples (z <= z_near) whose local heading departs > max_deg from the road heading.
+    Keep the longest remaining contiguous run (>= min_len_m); None if nothing is left."""
+    x = np.asarray(x, float).copy()
+    f = np.isfinite(x)
+    if f.sum() < 4:
+        return None
+    bad = np.zeros(len(ZS), bool)
+    for r in lanes:
+        lx = xg_of(r)
+        both = f & np.isfinite(lx)
+        idx = np.flatnonzero(both)
+        if len(idx) < 6:
+            continue
+        # only lanes that start INSIDE the edge (between ego and edge at the near end) can be crossed; lines lying
+        # beyond the edge (parking / kerb paint, munich and a2d2) must not trim it
+        if np.median((x[idx[:4]] - lx[idx[:4]]) * side) <= 0:
+            continue
+        bad |= both & ((x - lx) * side < -tol)
+    la = [v for v in (_near_angle(xg_of(r)) for r in lanes) if v is not None]
+    ref = np.radians(float(np.median(la))) if la else 0.0
+    xs = np.where(f, x, np.interp(ZS, ZS[f], x[f]))
+    ang = np.arctan(np.gradient(xs, ZS))
+    bad |= f & (ZS <= z_near) & (np.degrees(np.abs(ang - ref)) > max_deg)
+    run = _longest_run(f & ~bad, int(round(min_len_m / (ZS[1] - ZS[0]))))
+    if run is None:
+        return None
+    out = np.full(len(ZS), np.nan)
+    out[run[0]:run[1]] = x[run[0]:run[1]]
+    return out
+
+
+def suppress_edge_duplicates(lanes, edges, d_max=None, frac=0.7, min_n=12):
+    """iter7: drop a lane line that runs within d_max of a road edge over >= frac of their common span
+    (exit_approach f0020: right-most lane 0.3 m from the right edge duplicated it)."""
+    # GPU exit_approach f0018-20: gap 0.2 m near ego -> 0.7 m at 35 m (painted edge line vs asphalt edge), so 0.8 m
+    d_max = float(os.environ.get("FBEV_LANE_EDGE_DUP_M", "0.8")) if d_max is None else d_max
+    E = [xg_of(e) for e in edges]
+    keep = []
+    near = {}
+    for r in lanes:  # the nearest line on each side is never suppressed (keeps the nearest-L/R lane metric)
+        lx = xg_of(r); fx = np.isfinite(lx)
+        if fx.any():
+            k10 = np.flatnonzero(fx)[np.argmin(np.abs(ZS[fx] - 10.0))]  # the metric's nearest-L/R is taken at z=10
+            sd = -1 if lx[k10] < 0 else 1
+            d = abs(lx[k10])
+            if sd not in near or d < near[sd][0]:
+                near[sd] = (d, id(r))
+            i10 = int(np.argmin(np.abs(ZS - 10.0)))
+            if fx[i10] and ((sd, 10) not in near or d < near[(sd, 10)][0]):  # nearest among lines that reach z=10
+                near[(sd, 10)] = (d, id(r))
+    nearest = {v[1] for v in near.values()}
+    for r in lanes:
+        lx = xg_of(r); dup = False
+        if id(r) in nearest:
+            keep.append(r); continue
+        for ex in E:
+            both = np.isfinite(lx) & np.isfinite(ex)
+            if both.sum() >= min_n and (np.abs(lx[both] - ex[both]) <= d_max).mean() >= frac:
+                dup = True; break
+        if not dup:
+            keep.append(r)
+    return keep
+
+
+class EdgeHold:
+    """iter7: temporal hold per edge role. The last accepted edge is shifted by the ego travel ds
+    (x_new(z) = x_old(z + ds)) and kept per sample for up to max_age frames, with confidence decay**age.
+    - edge missing this frame: the propagated edge is emitted (held=True);
+    - edge present but trimmed / short: its missing samples are filled from the propagated edge, so the
+      near-ego part removed by trim_edge is bridged by the last good geometry instead of disappearing."""
+
+    def __init__(self, max_age=5, decay=0.8):
+        self.max_age, self.decay, self.last = max_age, decay, {}
+
+    @staticmethod
+    def _shift(x, ds):
+        f = np.isfinite(x)
+        out = np.full(len(ZS), np.nan)
+        if f.sum() >= 2:
+            zsrc = ZS + ds
+            m = (zsrc >= ZS[f].min()) & (zsrc <= ZS[f].max())
+            out[m] = np.interp(zsrc[m], ZS[f], x[f])
+        return out
+
+    def step(self, role, rec, ds):
+        prev = self.last.get(role)
+        px = pa = None
+        if prev is not None:
+            r0, x0, a0 = prev
+            px = self._shift(x0, ds)
+            pa = np.round(self._shift(a0.astype(float), ds)) + 1
+            pa[~np.isfinite(px)] = np.inf
+            px[pa > self.max_age] = np.nan
+        if rec is not None:
+            x = np.asarray(rec["xg"], float).copy()
+            age = np.where(np.isfinite(x), 0.0, np.inf)
+            if px is not None:
+                fill = ~np.isfinite(x) & np.isfinite(px)
+                x[fill] = px[fill]; age[fill] = pa[fill]
+            out = dict(rec, xg=x)
+            if np.isfinite(age[np.isfinite(x)]).any() and (age[np.isfinite(x)] > 0).any():
+                out["hold_filled"] = int((age[np.isfinite(x)] > 0).sum())
+            self.last[role] = (out, x, np.where(np.isfinite(x), age, np.inf))
+            fz = ZS[np.isfinite(x)]; out["zmin"], out["zmax"] = float(fz.min()), float(fz.max())
+            return out
+        if px is None or np.isfinite(px).sum() < 4:
+            self.last.pop(role, None)
+            return None
+        fa = pa[np.isfinite(px)]
+        out = dict(prev[0], xg=px, held=True, hold_age=int(fa.min()),
+                   hold_conf=round(float(self.decay ** fa.min()), 3))
+        fz = ZS[np.isfinite(px)]; out["zmin"], out["zmax"] = float(fz.min()), float(fz.max())
+        self.last[role] = (out, px, np.where(np.isfinite(px), pa, np.inf))
+        return out
+
+
 class DivergenceGore:
     """iter6: persistent divergence gores. A candidate (per-frame fork_gores wedge, or a TEMPORAL widening of the
     gap between the outermost lane line and that side's main edge) must persist >= n_persist consecutive frames
@@ -659,8 +802,9 @@ class StageLines:
         self.gore = GoreTracker(n_birth=3)  # iter6: stripe gores need 3 frames
         self.div = DivergenceGore()
         self.n_split_frames = 0
+        self.hold = EdgeHold()
 
-    def step(self, k, road_bev, paint_bev, valid_bev, res):
+    def step(self, k, road_bev, paint_bev, valid_bev, res, ds=0.0):
         comps = components(paint_bev, res)
         chains, stripes = extract_chains(comps)
         lanes = clean_lanes([_legacy(r) for r in self.lanes.step(k, [smooth_chain(c) for c in chains])])
@@ -676,11 +820,27 @@ class StageLines:
             if role.startswith("split"):
                 got = [r for r in got if r["hits"] >= 4 and _plausible(r["x"], max_slope=0.25, max_step=0.15)]
             if role.startswith("main"):
-                # iter6: no diagonal edges: heading within 15 deg of the ego near the ego, and never crossing a lane
-                got = [r for r in got if heading_ok(r["x"], lanes=lanes) and not crosses_lane(r["x"], lanes)]
+                # iter7: trim the bad near-ego / lane-crossing part instead of dropping the edge; hold <= 5 frames
+                sd = -1 if role == "main_L" else 1
+                tr_ = []
+                for r in got:
+                    xt = trim_edge(r["x"], sd, lanes)
+                    if xt is not None:
+                        tr_.append(dict(r, x=xt))
+                got = tr_
             for r in got:
                 side = -1 if role == "main_L" else (1 if role == "main_R" else None)
                 edges.append(_legacy(r, side=side, kind="edge", extra={"role": role, "split": role.startswith("split")}))
+        for role, sd in (("main_L", -1), ("main_R", 1)):  # iter7 temporal hold (+ fill of trimmed samples)
+            cur = [e for e in edges if e.get("role") == role]
+            h = self.hold.step(role, cur[0] if cur else None, ds)
+            if h is not None and h.get("hold_filled") or (h is not None and h.get("held")):
+                xt = trim_edge(h["xg"], sd, lanes)  # held / filled geometry must not cross a lane either
+                h = dict(h, xg=xt) if xt is not None else (cur[0] if cur else None)
+            if cur:
+                edges[edges.index(cur[0])] = h
+            elif h is not None:
+                edges.append(h)
         # iter5: stripe gores need >= 3 stripes and a compact hull; plus fork gores (child diverging from parent
         # lane / split edge diverging from main edge with a growing gap)
         sg = [g for g in gore_polygons(stripes, min_stripes=3) if g["area"] <= 40.0]

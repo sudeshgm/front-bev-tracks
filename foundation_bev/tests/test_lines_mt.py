@@ -158,3 +158,57 @@ def test_iter6_edge_heading_and_persistent_divergence_gore():
     dg2 = LM.DivergenceGore()
     jit = [3.5, 4.6, 3.4, 4.7, 3.5, 4.6]  # flicker, not growth -> no gore
     assert not any(dg2.step([lane], [rec(2, np.full(len(Z), x), 1, role="main_R")]) for x in jit)
+
+
+def _r(x, side=None, role=None, hits=10, i=0):
+    Z = LM.ZS
+    x = np.asarray(x, float); f = np.isfinite(x)
+    return {"id": i, "xg": x, "hits": hits, "parent": None, "fork_z": None, "held": False,
+            "side": side if side is not None else (-1 if np.nanmedian(x) < 0 else 1),
+            "zmin": float(Z[f].min()), "zmax": float(Z[f].max()), "c": np.zeros(3), "role": role}
+
+
+def test_iter7_trim_edge_keeps_good_part():
+    Z = LM.ZS
+    lane = _r(np.full(len(Z), -1.75))
+    straight = np.full(len(Z), -5.0)
+    assert np.isfinite(LM.trim_edge(straight, -1, [lane])).sum() == np.isfinite(straight).sum()
+    # lane_split f0015: left edge starts outside the lane (x=-5 at z=5) and runs diagonally inward across it
+    # (crossing at z~16): only the part on the correct side of the lane survives
+    diag = -5.0 + (Z - 5.0) * 0.3
+    t = LM.trim_edge(diag, -1, [lane])
+    zk = LM.ZS[np.isfinite(t)]
+    assert t is not None and zk.min() <= 5.5 and zk.max() <= 18.5, (zk.min(), zk.max())
+    assert np.all(t[np.isfinite(t)] <= -1.75 + 0.5)
+    # paint lying BEYOND the edge (parking line at x=-6.5) must not trim it
+    assert np.isfinite(LM.trim_edge(straight, -1, [_r(np.full(len(Z), -6.5))])).sum() == np.isfinite(straight).sum()
+    # 30 deg near-ego heading with no lanes: trimmed near part, 25 deg gate
+    bent = np.where(Z < 15, -5.0 + (15 - Z) * np.tan(np.radians(30)), -5.0)
+    t2 = LM.trim_edge(bent, -1, [])
+    assert t2 is not None and np.nanmin(LM.ZS[np.isfinite(t2)]) >= 14.0
+
+
+def test_iter7_edge_hold_propagates_and_fills():
+    Z = LM.ZS
+    h = LM.EdgeHold(max_age=5)
+    e = _r(np.full(len(Z), -5.0), role="main_L")
+    assert h.step("main_L", e, 1.0)["xg"] is not None
+    outs = [h.step("main_L", None, 1.0) for _ in range(7)]
+    assert all(o is not None and o["held"] for o in outs[:5]) and outs[5] is None and outs[6] is None
+    assert outs[0]["hold_conf"] > outs[4]["hold_conf"]
+    h2 = LM.EdgeHold()
+    h2.step("main_R", _r(np.full(len(Z), 5.0), role="main_R"), 0.5)
+    trimmed = np.where(Z >= 15, 5.0, np.nan)            # near part trimmed this frame
+    o = h2.step("main_R", _r(trimmed, role="main_R"), 0.5)
+    assert o["zmin"] < 6.0 and o.get("hold_filled", 0) > 0
+
+
+def test_iter7_lane_duplicating_edge_suppressed_but_nearest_kept():
+    Z = LM.ZS
+    near = _r(np.full(len(Z), 1.7), i=1)
+    dup = _r(np.full(len(Z), 5.2), i=2)                 # 0.3 m from the right edge (exit_approach f0020)
+    edge = _r(np.full(len(Z), 5.5), role="main_R")
+    ids = {r["id"] for r in LM.suppress_edge_duplicates([near, dup], [edge])}
+    assert ids == {1}
+    ids = {r["id"] for r in LM.suppress_edge_duplicates([dup], [edge])}  # nearest on its side -> kept
+    assert ids == {2}

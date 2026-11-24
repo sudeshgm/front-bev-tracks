@@ -49,3 +49,17 @@ def test_no_numpy2_only_calls_in_src():
            "np.matrix_transpose(", "np.permute_dims(", "np.pow(", "np.acos(", "np.asin(", "np.atan2(", "np.atan(")
     hits = [(f, b) for f in os.listdir(src) if f.endswith(".py") for b in bad if b in open(os.path.join(src, f)).read()]
     assert not hits, hits
+
+
+def test_iter7_robust_kf_update_limits_outlier_pull():
+    import bev_smooth as BS
+    kf_args = None
+    tr = BS.ObjTracker(10.0, 8.0)
+    d = lambda z: {"cls": "car", "score": 0.9, "box": [100, 100, 140, 130], "bev": (-15.0, z), "src": "fuse"}
+    for k in range(8):
+        tr.step(k, [d(24.0)])
+    t = tr.active[0]
+    before = float(t["kf"].x[1])
+    tr.step(8, [dict(d(24.0), bev=(-15.0, 34.5 - 8.0 * 8 / 10.0 * 0))])  # 10 m depth jump, same box
+    after = float(t["kf"].x[1])
+    assert abs(after - before) < 3.0, (before, after)

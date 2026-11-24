@@ -1,0 +1,281 @@
+--- a/src/lines_mt.py
++++ b/src/lines_mt.py
+@@ -20,6 +20,8 @@
+                       touches an existing line (< 1 m) at one end becomes its child (fork / merge point)
+   GoreTracker         hit-count + EMA on polygon vertices
+ """
++import os
++
+ import numpy as np
+ 
+ # iter5b: NumPy 1.x has only np.trapz; NumPy >= 2.? removed np.trapz (2.0 added np.trapezoid)
+@@ -468,14 +470,15 @@
+     return float(np.median(np.abs(d))) <= max_slope and float(np.percentile(np.abs(np.diff(x[f])), 90)) <= max_step
+ 
+ 
+-def clean_lanes(lanes, min_len=6.0, min_hits=4, per_side=3, z_ref=10.0):
++def clean_lanes(lanes, min_len=6.0, min_hits=4, per_side=4, z_ref=10.0):
+     """iter5 clutter control: min length + age, no near-horizontal/zigzag, no crossings, <= per_side per side."""
+     ok = []
+     for r in lanes:
+         f = np.isfinite(r["xg"])
+-        if f.sum() < 2 or (ZS[f].max() - ZS[f].min()) < min_len or r["hits"] < min_hits:
++        # iter6: reject only if BOTH short and young (iter5 required both, killing real lanes)
++        if f.sum() < 2 or ((ZS[f].max() - ZS[f].min()) < min_len and r["hits"] < min_hits):
+             continue
+-        if not _plausible(r["xg"]):
++        if not _plausible(r["xg"], max_slope=0.5, max_step=0.5):  # iter6: zigzag step 0.3 -> 0.5 m
+             continue
+         ok.append(r)
+     ok.sort(key=lambda r: -r["hits"])
+@@ -500,7 +503,99 @@
+     return out
+ 
+ 
+-def fork_gores(lanes, edges, min_gap=1.0, max_gap=4.0):
++def _near_angle(x, z_near=(5.0, 15.0)):
++    f = np.isfinite(x) & (ZS >= z_near[0]) & (ZS <= z_near[1])
++    if f.sum() < 4:
++        f = np.isfinite(x)
++        f &= ZS <= (ZS[f].min() + 10.0) if f.any() else f
++    if f.sum() < 4:
++        return None
++    return float(np.degrees(np.arctan(np.polyfit(ZS[f], x[f], 1)[0])))
++
++
++def heading_ok(x, max_deg=float(os.environ.get("FBEV_EDGE_MAX_DEG", 15.0)), lanes=()):
++    """iter6: an edge must run within max_deg of the road heading near the ego. Road heading = median heading of
++    the tracked lanes (so curves / turns, e.g. munich, are not rejected), else the ego heading (0)."""
++    a = _near_angle(x)
++    if a is None:
++        return True
++    la = [v for v in (_near_angle(r["xg"]) for r in lanes) if v is not None]
++    ref = float(np.median(la)) if la else 0.0
++    return abs(a - ref) <= max_deg
++
++
++def crosses_lane(x, lanes, tol=0.5, min_n=6):
++    """iter6: True if the curve x(ZS) passes from one side of a tracked lane line to the other (> tol each way)."""
++    for r in lanes:
++        both = np.isfinite(x) & np.isfinite(r["xg"])
++        if both.sum() >= 6:
++            d = x[both] - r["xg"][both]
++            if (d > tol).sum() >= min_n and (d < -tol).sum() >= min_n:  # >= 3 m clearly on each side
++                return True
++    return False
++
++
++class DivergenceGore:
++    """iter6: persistent divergence gores. A candidate (per-frame fork_gores wedge, or a TEMPORAL widening of the
++    gap between the outermost lane line and that side's main edge) must persist >= n_persist consecutive frames
++    with a non-decreasing gap before it is drawn."""
++
++    def __init__(self, n_persist=3, grow_m=float(os.environ.get("FBEV_GORE_GROW_M", 1.2)), hist=12,
++                 max_step=float(os.environ.get("FBEV_GORE_MAX_STEP", 0.4))):
++        self.n_persist, self.grow_m, self.hist, self.max_step = n_persist, grow_m, hist, max_step
++        self.run = {}      # key -> consecutive frames
++        self.gaps = {-1: [], 1: []}
++
++    def step(self, lanes, edges):
++        cands = {}
++        # iter6: the single-frame lane-vs-edge wedge fired persistently on urban kerbs (munich, a2d2, city);
++        # the temporal "widen" rule below replaces it. Child-lane forks and split edges are kept.
++        for g in fork_gores(lanes, edges, lane_edge=False):
++            cands[("fork", int(np.sign(g["centre"][0])))] = g
++        mains = {e["side"]: e for e in edges if e.get("role") in ("main_L", "main_R")}
++        for sd in (-1, 1):
++            ls = [r for r in lanes if r["side"] == sd and np.isfinite(r["xg"]).sum() >= 8]
++            e = mains.get(sd)
++            if not ls or e is None:
++                self.gaps[sd] = []
++                continue
++            # iter6: the through-lane line nearest the ego (GPU exit_approach: the exit lane's own outer line hugs the
++            # SAM edge, so outermost-lane -> edge never widens; nearest-line -> edge grows 2.2 -> 4.0 m over f8-f20)
++            nl = min(ls, key=lambda r: abs(np.nanmedian(r["xg"])))
++            both = np.isfinite(nl["xg"]) & np.isfinite(e["xg"]) & (ZS >= 6.0) & (ZS <= 30.0)
++            if both.sum() < 8:
++                self.gaps[sd] = []
++                continue
++            gap = (e["xg"] - nl["xg"]) * sd
++            gm = float(np.median(gap[both & (ZS <= 20.0)])) if (both & (ZS <= 20.0)).sum() >= 4 else float(np.median(gap[both]))
++            H = (self.gaps[sd] + [gm])[-self.hist:]
++            if len(H) >= 2 and abs(H[-1] - H[-2]) > self.max_step:
++                H = [gm]  # a jump (lane change, edge flip) restarts the history: growth must be gradual
++            self.gaps[sd] = H
++            base = min(H)
++            steps = np.diff(H[-4:]) if len(H) >= 4 else np.array([np.inf])
++            # growing (>= grow_m above the recent minimum), monotone over the last 3 steps, and smooth
++            # (each step <= max_step: a lane change or an edge flip jumps, an exit lane opens gradually)
++            if len(H) >= 4 and gm - base >= self.grow_m and (steps >= -0.05).all() and (steps <= self.max_step).all():
++                sel = both & (gap - base >= 0.3)
++                if sel.sum() >= 4:
++                    xa = nl["xg"][sel] + sd * base; xb = e["xg"][sel]; zz = ZS[sel]
++                    poly = np.concatenate([np.stack([xa, zz], 1), np.stack([xb, zz], 1)[::-1]])
++                    cands[("widen", sd)] = {"poly": poly, "n_stripes": 0, "area": float(_trapz(np.abs(xb - xa), zz)),
++                                            "centre": poly.mean(0), "src": "widen"}
++        out = []
++        for k in list(self.run):
++            if k not in cands:
++                self.run[k] = 0
++        for k, g in cands.items():
++            self.run[k] = self.run.get(k, 0) + 1
++            # spatial (single-frame shape) wedges flicker on city clutter -> 2x persistence; temporal widening 1x
++            if self.run[k] >= (self.n_persist if k[0] == "widen" else 2 * self.n_persist):
++                out.append(g)
++        return out
++
++
++def fork_gores(lanes, edges, min_gap=1.0, max_gap=4.0, lane_edge=True):
+     """Gore between a diverging pair (child lane vs parent lane, or split edge vs main edge on its side):
+     the gap must grow with z from < min_gap near the fork to >= min_gap; polygon spans the diverging part."""
+     pairs = []
+@@ -513,7 +608,7 @@
+         if e.get("role") == "split_in" and e["side"] in mains:
+             pairs.append((mains[e["side"]]["xg"], e["xg"]))
+     # lane vs its side's main edge (exit lane opening between the through-lane line and the widening edge)
+-    for sd, e in mains.items():
++    for sd, e in (mains.items() if lane_edge else ()):
+         ls = [r for r in lanes if r["side"] == sd and np.isfinite(r["xg"]).sum() >= 8]
+         if ls:
+             nl = max(ls, key=lambda r: np.nanmedian(r["xg"]) * sd)  # outermost lane line on that side
+@@ -561,7 +656,8 @@
+         self.lanes = MultiLineTracker("lane", alpha=0.25)  # iter5: 0.4 -> 0.25
+         self.edges = {r: MultiLineTracker("edge", n_birth=3, n_death=4, gate_max=2.0, alpha=0.2)
+                       for r in ("main_L", "main_R", "split_in", "split_out")}
+-        self.gore = GoreTracker()
++        self.gore = GoreTracker(n_birth=3)  # iter6: stripe gores need 3 frames
++        self.div = DivergenceGore()
+         self.n_split_frames = 0
+ 
+     def step(self, k, road_bev, paint_bev, valid_bev, res):
+@@ -579,13 +675,16 @@
+             got = live if live else got[:1]  # one boundary per role: drop a coasting duplicate after a re-birth
+             if role.startswith("split"):
+                 got = [r for r in got if r["hits"] >= 4 and _plausible(r["x"], max_slope=0.25, max_step=0.15)]
++            if role.startswith("main"):
++                # iter6: no diagonal edges: heading within 15 deg of the ego near the ego, and never crossing a lane
++                got = [r for r in got if heading_ok(r["x"], lanes=lanes) and not crosses_lane(r["x"], lanes)]
+             for r in got:
+                 side = -1 if role == "main_L" else (1 if role == "main_R" else None)
+                 edges.append(_legacy(r, side=side, kind="edge", extra={"role": role, "split": role.startswith("split")}))
+         # iter5: stripe gores need >= 3 stripes and a compact hull; plus fork gores (child diverging from parent
+         # lane / split edge diverging from main edge with a growing gap)
+         sg = [g for g in gore_polygons(stripes, min_stripes=3) if g["area"] <= 40.0]
+-        fg = fork_gores(lanes, edges)
++        fg = self.div.step(lanes, edges)
+         gores = [{"poly": np.asarray(g["poly"], float).tolist(), "n_stripes": int(g.get("n_stripes", 0)),
+                   "src": g.get("src", "stripes")} for g in self.gore.step(sg + fg)]
+         return lanes, edges, gores
+--- a/src/foundation_bev.py
++++ b/src/foundation_bev.py
+@@ -48,6 +48,7 @@
+ COL_LANE = (80, 210, 90)
+ COL_EDGE = (40, 140, 255)
+ COL_EGO = (230, 230, 230)
++STATIC_PIN_MPS = 1.5  # iter6
+ COL_PATH = (255, 255, 255)  # iter4: ego path white, distinct from lines
+ COL_SPLIT = (40, 200, 255)  # iter4: exit/split edges + gore outline, lighter orange
+ 
+@@ -705,6 +706,17 @@
+         # tracker world = ego-relative + prior travel; re-express with the SELECTED ego travel s_sel
+         if s_sel is not None:
+             rel = [(r["smooth"][0], r["smooth"][1] - tf(r["frame"]) + float(s_sel[r["frame"]] - s_sel[now])) for r in rows]
++            # iter6: near-static tracks (ground speed < 1.5 m/s over their history so far) are pinned to the median
++            # world position: one dot, no trail (kills the 5-8 m sideways drift of parked cars)
++            hist_ = [r for r in tr["rows"] if r["frame"] <= now]
++            if len(hist_) >= 5:
++                wx = np.array([r["smooth"][0] for r in hist_])
++                wz = np.array([r["smooth"][1] - tf(r["frame"]) + float(s_sel[r["frame"]]) for r in hist_])
++                dt_ = max((hist_[-1]["frame"] - hist_[0]["frame"]) / fps, 1e-3)
++                # longitudinal ground speed only: the lateral component IS the artifact (box-x drift with range)
++                v_g = abs(np.median(wz[-3:]) - np.median(wz[:3])) / dt_
++                if v_g < STATIC_PIN_MPS:
++                    rel = [(float(np.median(wx)), float(np.median(wz)) - float(s_sel[now]))]
+         else:
+             rel = [(r["smooth"][0], r["smooth"][1] - travel_now) for r in rows]
+         cx_, cz_ = rel[-1]
+@@ -1227,7 +1239,7 @@
+     pp = Path(args.polylines_json)
+     pp.parent.mkdir(parents=True, exist_ok=True)
+     pp.write_text(json.dumps({
+-        "clip": tag, "version": "iter5",
++        "clip": tag, "version": "iter6",
+         "units": {"image": "pixels, x right, y down", "bev": "metres in current ego frame, x right, z forward",
+                   "c": "x(z) = c0 + c1*z + c2*z^2 in the current ego frame"},
+         "K": {"fx": fx, "fy": fy, "cx": cx, "cy": cy}, "cam_height_m": cam_h, "fps": fps, "ego_speed_mps": speed,
+@@ -1237,7 +1249,7 @@
+     }))
+     n_lane_route = sum(1 for o in obs_all if len(o["lane_px"]))
+     dp = Path(args.dets_json) if args.dets_json else pp.with_name(f"{tag}_dets_ego.json")
+-    dp.write_text(json.dumps({"clip": tag, "version": "iter5", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
++    dp.write_text(json.dumps({"clip": tag, "version": "iter6", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
+                               "ground": ground, "frames": det_dump,
+                               "ego": {"selected": {k: v for k, v in ego_sel.items() if k not in ("s", "speed")},
+                                       "speed_selected_mps": [round(float(v), 3) for v in ego_sel["speed"]],
+@@ -1246,7 +1258,7 @@
+                                       "scene_speed_mps": [round(float(v), 3) for v in scene["speed"]],
+                                       "prior_mps": speed}}, default=float))
+     rec = {
+-        "rc": 0, "tag": tag, "version": "iter5", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
++        "rc": 0, "tag": tag, "version": "iter6", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
+         "K": [fx, fy, cx, cy], "cam_height": cam_h, "ego_speed_mps": speed, "ground": ground,
+         "n_obj_dets_npz": n_obj_dets, "n_tracks": len(tracks), "n_relink": trk.n_relink,
+         "n_track_rows": len(csv_rows), "lane_gated": lt.n_gated,
+--- a/src/run_iter5b.py
++++ b/src/run_iter6.py
+@@ -42,7 +42,7 @@
+ WALL_CAP = float(os.environ.get("FBEV_WALL_CAP", str(3.8 * 3600)))
+ MAXF = int(os.environ.get("FBEV_MAXF", "0"))
+ SMOKE = os.environ.get("FBEV_SMOKE") == "1"
+-# iter5b: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
++# iter6: stage-2-only rerun. FBEV_REUSE_DETS=<dir> holding stage-1 output wd3d_<tag>.npz (preferred) or
+ # <tag>_dets_ego.json (dets_dump); WildDet3D install/pre-flight/stage 1 are skipped. FBEV_TAGS = comma list of clips.
+ REUSE = os.environ.get("FBEV_REUSE_DETS", "")
+ if os.environ.get("FBEV_TAGS"):
+@@ -98,7 +98,7 @@
+     shutil.copy2(src, os.path.join(OUT, fn))
+     meta.setdefault("script_sha256", {})[fn] = sha256(os.path.join(OUT, fn))
+ 
+-CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
++CAMS_JSON = next((os.path.join(DS, c) for c in ("cams_iter6.json", "cams_iter5b.json", "cams_iter5.json", "cams_iter3.json", "cams_iter2.json", "cams.json") if os.path.exists(os.path.join(DS, c))))
+ cams = json.load(open(CAMS_JSON))
+ meta["cams_json"] = os.path.basename(CAMS_JSON)
+ motion = json.load(open(os.path.join(DS, "motion_assumptions.json")))
+@@ -193,7 +193,7 @@
+         meta["stage1_summary"] = json.load(open("dets/wd3d_summary.json"))
+     except Exception as e:  # noqa: BLE001
+         meta["stage1_summary_err"] = repr(e)
+-if REUSE:  # iter5b: link the kept stage-1 dets, stop if any requested clip is missing
++if REUSE:  # iter6: link the kept stage-1 dets, stop if any requested clip is missing
+     os.makedirs(f"{OUT}/dets", exist_ok=True)
+     missing, used = [], {}
+     for t in TAGS:
+@@ -256,10 +256,10 @@
+         meta["videos"][tag] = {"rc": 26, "error": "missing video"}
+         save()
+         continue
+-    o = f"{OUT}/results/{tag}_foundation_bev_iter5b.mp4"
++    o = f"{OUT}/results/{tag}_foundation_bev_iter6.mp4"
+     dets = f"{OUT}/dets/wd3d_{tag}.npz"
+     if not os.path.exists(dets) and os.path.exists(f"{OUT}/dets/{tag}_dets_ego.json"):
+-        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter5b: reused dets_dump
++        dets = f"{OUT}/dets/{tag}_dets_ego.json"  # iter6: reused dets_dump
+     if SMOKE:
+         dets = dets if os.path.exists(dets) else ""
+     elif not os.path.exists(dets):
+@@ -378,13 +378,13 @@
+     lines.append("")
+ lines.append("## Outputs")
+ lines.append("")
+-lines.append("- `results/<clip>_foundation_bev_iter5b.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
++lines.append("- `results/<clip>_foundation_bev_iter6.mp4` — side-by-side front + BEV, H.264 when ffmpeg is available")
+ lines.append("- `stills/<clip>_fNNNN.png` — 2–3 mid / busy / early frames")
+ lines.append("- `tracks/<clip>_tracks.csv` — frame, track_id, class, score, bev_x, bev_z, x, y, z")
+ lines.append("- `polylines/<clip>_polylines.json` — per-frame lane/edge poly2 coefficients + sampled BEV/pixel curves")
+ lines.append("- `dets_dump/<clip>_dets_ego.json` — per-frame WD3D boxes/scores/3D, DAV2 scale, box depth, billboard flag, ego-speed candidates (offline replay)")
+ lines.append("- `metrics.md` / `metrics.json` — smoothness_metrics.py report (accel RMS, ID-switch proxy, line jitter)")
+-sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter5b --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
++sh(f"cd {OUT} && {sys.executable} smoothness_metrics.py --run {OUT} --label iter6 --out {OUT}/metrics.md --json {OUT}/metrics.json > log_metrics.txt 2>&1")
+ if os.path.exists(f"{OUT}/metrics.md"):
+     lines += ["", open(f"{OUT}/metrics.md").read()]
+ open(f"{OUT}/README.md", "w").write("\n".join(lines) + "\n")

@@ -46,3 +46,6 @@ __pycache__/
 *.pem
 *credentials*
 *secret*
+
+# Small hand-picked result stills (JPEG, < 200 KB each) are allowed
+!results/*/key_stills/*.jpg

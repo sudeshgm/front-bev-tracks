@@ -49,6 +49,7 @@ COL_LANE = (80, 210, 90)
 COL_EDGE = (40, 140, 255)
 COL_EGO = (230, 230, 230)
 STATIC_PIN_MPS = 1.5  # iter6
+STATIC_PERP_RATIO = 1.0  # iter7: |v_lat| > ratio * |v_long| -> sideways-dominant track: dot at current position, no trail
 COL_PATH = (255, 255, 255)  # iter4: ego path white, distinct from lines
 COL_SPLIT = (40, 200, 255)  # iter4: exit/split edges + gore outline, lighter orange
 
@@ -709,14 +710,25 @@ def draw_bev2(h, now, tracks_by_frame, lanes, edges, speed, fps, tail, bev_w=BEV
             # iter6: near-static tracks (ground speed < 1.5 m/s over their history so far) are pinned to the median
             # world position: one dot, no trail (kills the 5-8 m sideways drift of parked cars)
             hist_ = [r for r in tr["rows"] if r["frame"] <= now]
+            if len(hist_) < 5:
+                rel = rel[-1:]  # iter7: young track -> dot only until the static test is possible (lane_split #14)
             if len(hist_) >= 5:
                 wx = np.array([r["smooth"][0] for r in hist_])
                 wz = np.array([r["smooth"][1] - tf(r["frame"]) + float(s_sel[r["frame"]]) for r in hist_])
                 dt_ = max((hist_[-1]["frame"] - hist_[0]["frame"]) / fps, 1e-3)
                 # longitudinal ground speed only: the lateral component IS the artifact (box-x drift with range)
                 v_g = abs(np.median(wz[-3:]) - np.median(wz[:3])) / dt_
+                v_lat = abs(np.median(wx[-3:]) - np.median(wx[:3])) / dt_
+                # iter7: tracks moving mostly perpendicular to the road. lane_split #10 at f0015 (GPU #14): v_long 3.8,
+                # v_lat 4.2 m/s, i.e. a real slow mover whose sideways part is box-x drift / unmodelled ego yaw.
+                # Its trail is the diagonal; draw it as a dot at its CURRENT position (it does move, so no median pin).
+                perp = v_lat > STATIC_PERP_RATIO * v_g and v_lat > 1.0
+                if os.environ.get("FBEV_DEBUG_PIN") and now == int(os.environ["FBEV_DEBUG_PIN"]):
+                    print("PIN", tr.get("id"), len(hist_), round(v_g, 2), round(v_lat, 2), perp, rel[-1], rel[0], file=sys.stderr)
                 if v_g < STATIC_PIN_MPS:
                     rel = [(float(np.median(wx)), float(np.median(wz)) - float(s_sel[now]))]
+                elif perp:
+                    rel = rel[-1:]
         else:
             rel = [(r["smooth"][0], r["smooth"][1] - travel_now) for r in rows]
         cx_, cz_ = rel[-1]
@@ -1109,7 +1121,8 @@ def run_clip2(args):
                 paint_bev[v_[okp].astype(int), u_[okp].astype(int)] = 1
                 paint_bev = cv2.dilate(paint_bev, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 15)))
             road_bev = np.unpackbits(ob["road_bev"])[: bev_hw[0] * bev_hw[1]].reshape(bev_hw).astype(bool)
-            lz, ez, gz = stage_lines.step(k, road_bev, paint_bev > 0, bev_valid, IP.RES)
+            lz, ez, gz = stage_lines.step(k, road_bev, paint_bev > 0, bev_valid, IP.RES,
+                                          ds=float(s_ego[k] - s_ego[k - 1]) if k else 0.0)
             # iter5: iter3-style nearest L/R fallback when lines_mt has no confident lane on that side at z~10 m
             fits_l, efits_l, _ = fit_frame_lines(ob, gm, prior, args, agg=lane_agg, ds_k=float(s_ego[k] - s_ego[k - 1]) if k else 0.0)
             leg = lt.step(k, fits_l, ds_line); et.step(k, efits_l, ds_line)
@@ -1117,6 +1130,7 @@ def run_clip2(args):
                 conf = [r for r in lz if r["side"] == sd and r["hits"] >= 4 and r["zmin"] <= 12.0]
                 if not conf:
                     lz += [dict(r_, fallback=True, xg=None) for r_ in leg if r_.get("side") == sd and not r_.get("held")][:1]
+            lz = LM.suppress_edge_duplicates(lz, [e for e in ez if str(e.get("role", "")).startswith("main")])  # iter7
             lanes_live.append(lz); edges_live.append(ez); gores_live.append(gz)
             fits, efits = lz, ez
         else:
@@ -1239,7 +1253,7 @@ def run_clip2(args):
     pp = Path(args.polylines_json)
     pp.parent.mkdir(parents=True, exist_ok=True)
     pp.write_text(json.dumps({
-        "clip": tag, "version": "iter6",
+        "clip": tag, "version": "iter7",
         "units": {"image": "pixels, x right, y down", "bev": "metres in current ego frame, x right, z forward",
                   "c": "x(z) = c0 + c1*z + c2*z^2 in the current ego frame"},
         "K": {"fx": fx, "fy": fy, "cx": cx, "cy": cy}, "cam_height_m": cam_h, "fps": fps, "ego_speed_mps": speed,
@@ -1249,7 +1263,7 @@ def run_clip2(args):
     }))
     n_lane_route = sum(1 for o in obs_all if len(o["lane_px"]))
     dp = Path(args.dets_json) if args.dets_json else pp.with_name(f"{tag}_dets_ego.json")
-    dp.write_text(json.dumps({"clip": tag, "version": "iter6", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
+    dp.write_text(json.dumps({"clip": tag, "version": "iter7", "fps": fps, "K": [fx, fy, cx, cy], "cam_height": cam_h,
                               "ground": ground, "frames": det_dump,
                               "ego": {"selected": {k: v for k, v in ego_sel.items() if k not in ("s", "speed")},
                                       "speed_selected_mps": [round(float(v), 3) for v in ego_sel["speed"]],
@@ -1258,7 +1272,7 @@ def run_clip2(args):
                                       "scene_speed_mps": [round(float(v), 3) for v in scene["speed"]],
                                       "prior_mps": speed}}, default=float))
     rec = {
-        "rc": 0, "tag": tag, "version": "iter6", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
+        "rc": 0, "tag": tag, "version": "iter7", "frames_in": frame_i, "frames_out": n_out, "fps": fps,
         "K": [fx, fy, cx, cy], "cam_height": cam_h, "ego_speed_mps": speed, "ground": ground,
         "n_obj_dets_npz": n_obj_dets, "n_tracks": len(tracks), "n_relink": trk.n_relink,
         "n_track_rows": len(csv_rows), "lane_gated": lt.n_gated,
