@@ -164,7 +164,7 @@ def track_filter(tracks, fps, ego, edges_by_frame=None, highway=False, min_hits=
                  thr=SCORE_THR, persons_near_m=1.5, rider_frac=0.3, static_rel=0.08):
     """tracks: {tid: dict(cls, frames, x, z, scores (hits only), hits)}. Returns {tid: decision} with
     decision in {'draw', 'draw_static', 'drop_*'} and a static flag."""
-    min_hits = min_hits or max(5, int(round(0.5 * fps)))
+    min_hits = min_hits or max(5 if fps >= 10 else max(2, int(round(0.5 * fps))), int(round(0.5 * fps)))  # iter13: 0.5 s below 10 fps
     out = {}
     # person positions per frame for bicycle rider support
     pmap = {}

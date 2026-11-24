@@ -25,6 +25,18 @@ import os
 
 import numpy as np
 
+# iter13: low-frame-rate time base (fc1_merge is 4 fps). Frame-count constants were tuned at 10 Hz (KITTI, A2D2)
+# and kept as-is on Munich (30 Hz). Below 10 fps they are scaled to the same TIME span as at 10 Hz, with a floor,
+# so clips at >= 10 fps are bit-identical. FBEV_LOWFPS_TIME=0 restores raw frame counts.
+LOWFPS_TIME = os.environ.get("FBEV_LOWFPS_TIME", "1") == "1"
+
+
+def fr10(n, fps, floor=1):
+    """Frame count n tuned at 10 Hz -> same time span at fps when fps < 10 (>= floor); unchanged at >= 10 fps."""
+    if not LOWFPS_TIME or fps is None or float(fps) >= 10.0:
+        return n
+    return max(int(floor), int(round(n * float(fps) / 10.0)))
+
 # iter5b: NumPy 1.x has only np.trapz; NumPy >= 2.? removed np.trapz (2.0 added np.trapezoid)
 _trapz = getattr(np, "trapezoid", None) or np.trapz
 import cv2
@@ -717,6 +729,9 @@ def suppress_edge_duplicates(lanes, edges, d_max=None, frac=0.7, min_n=12):
 EDGE_FRAG_M = float(os.environ.get("FBEV_EDGE_FRAG_M", "6.0"))  # iter11: a live edge shorter than this is a fragment
 EDGE_FRAG_EXT_M = float(os.environ.get("FBEV_EDGE_FRAG_EXT_M", "12.0"))  # iter11: max near extension of a fragment
 EDGE_FRAG_DEV = float(os.environ.get("FBEV_EDGE_FRAG_DEV", "0.25"))     # iter11: fragment slope vs lane heading veto
+# iter13 (GPU iter12 munich R f562-563, f570-571): the veto also applies to a fragment the BEV edge tracker coasts
+# (held, no EdgeHold hold_age); iter11-12 let a coasted forecourt hook through because it carried held=True
+EDGE_FRAG_COAST = os.environ.get("FBEV_EDGE_FRAG_COAST", "1") == "1"
 
 
 def is_diag_fragment(e, lanes, z_near=10.0, max_dev=None):
@@ -725,7 +740,9 @@ def is_diag_fragment(e, lanes, z_near=10.0, max_dev=None):
     live main edge, which replaced the held line iter9 coasted. A live main edge shorter than EDGE_FRAG_M that starts
     beyond z_near and deviates from the lane heading by > max_dev is not a kerb: drop it for this frame."""
     max_dev = EDGE_FRAG_DEV if max_dev is None else max_dev
-    if EDGE_FRAG_M <= 0 or e is None or e.get("held") or e.get("kerb_occ"):
+    if EDGE_FRAG_M <= 0 or e is None or e.get("kerb_occ"):
+        return False
+    if e.get("held") and (not EDGE_FRAG_COAST or "hold_age" in e):
         return False
     x = np.asarray(e["xg"], float); f = np.isfinite(x)
     if f.sum() < 4 or np.ptp(ZS[f]) >= EDGE_FRAG_M or ZS[f].min() <= z_near:
@@ -781,6 +798,10 @@ def retrim_held(h, cur, side, lanes):
 
 EDGE_ANCHOR_S = float(os.environ.get("FBEV_EDGE_ANCHOR_S", "3.0"))     # iter12: lane-anchored coast time (0 = off)
 EDGE_ANCHOR_DEV = float(os.environ.get("FBEV_EDGE_ANCHOR_DEV", "0.15"))  # iter12: learn only from lane-parallel edges
+# iter13 (GPU iter12 munich R f190-196, f215, f240, f250: x10 8.6 -> 6.8 -> 9.8 m when the same-side lane drops out and
+# the reference flips to the opposite edge, whose offset was learned at another time): an anchored line moves at z_ref
+# by at most EDGE_ANCHOR_RATE m/s from the previous frame's output of that role (0 = off)
+EDGE_ANCHOR_RATE = float(os.environ.get("FBEV_EDGE_ANCHOR_RATE", "1.0"))
 
 
 def _nearest_lane_x(lanes, side, z_ref=10.0):
@@ -816,6 +837,23 @@ class LaneAnchor:
         self.max_age = int(round(EDGE_ANCHOR_S * fps)); self.z_ref = z_ref
         self.iz = int(np.argmin(np.abs(ZS - z_ref)))
         self.s = {}
+        self.step_m = EDGE_ANCHOR_RATE / max(float(fps), 1e-6)  # iter13: max |dx| at z_ref per frame
+        self.prev = {}  # iter13: role -> x at z_ref of the previous frame's final output (None: none there)
+
+    def note(self, role, e):
+        """iter13: remember the final output of this frame (after the car clearance) for the continuity limit."""
+        x = None if e is None or e.get("xg") is None else float(np.asarray(e["xg"], float)[self.iz])
+        self.prev[role] = x if x is not None and np.isfinite(x) else None
+
+    def _limit(self, role, x):
+        """iter13: rate-limit a new anchored line at z_ref against the previous output (a parallel shift)."""
+        p = self.prev.get(role)
+        if self.step_m <= 0 or p is None or not np.isfinite(x[self.iz]):
+            return x
+        d = float(x[self.iz]) - p
+        if abs(d) <= self.step_m:
+            return x
+        return x - (d - np.sign(d) * self.step_m)
 
     def _off(self, x, ref, side):
         if ref is None:
@@ -859,6 +897,7 @@ class LaneAnchor:
         x = self._line(role, side, lanes, other)
         if x is None:
             return h
+        x = self._limit(role, x)
         xt = trim_edge(x, side, lanes)
         if xt is None or not np.isfinite(xt[self.iz]):
             return h
@@ -913,7 +952,7 @@ class EdgeHold:
         # iter8: hold for a fixed TIME (FBEV_EDGE_HOLD_S, 0.5 s), not 5 frames: 5 frames is 0.5 s at 10 Hz but only
         # 0.17 s on munich (30 Hz), where 169 held frames still left 246 frames without a right edge.
         hold_s = float(os.environ.get("FBEV_EDGE_HOLD_S", 0.5))
-        self.max_age = max_age if max_age is not None else max(5, int(round(hold_s * fps)))
+        self.max_age = max_age if max_age is not None else max(fr10(5, fps, 2), int(round(hold_s * fps)))
         self.decay = decay ** (5.0 / self.max_age)  # same confidence at the end of the hold
         self.last = {}
 
@@ -1090,11 +1129,13 @@ class StageLines:
     """Per-clip lane / edge / gore tracking on BEV masks (road: drivable, paint: markings)."""
 
     def __init__(self, fps=10.0):
-        self.lanes = MultiLineTracker("lane", alpha=0.25)  # iter5: 0.4 -> 0.25
-        self.edges = {r: MultiLineTracker("edge", n_birth=3, n_death=4, gate_max=2.0, alpha=0.2)
+        f = fps  # iter13: fr10 = same time span as at 10 Hz below 10 fps (no-op at >= 10 fps)
+        self.lanes = MultiLineTracker("lane", n_birth=fr10(3, f, 2), n_death=fr10(6, f, 2), alpha=0.25)  # iter5: 0.4 -> 0.25
+        self.edges = {r: MultiLineTracker("edge", n_birth=fr10(3, f, 2), n_death=fr10(4, f, 2), gate_max=2.0, alpha=0.2)
                       for r in ("main_L", "main_R", "split_in", "split_out")}
-        self.gore = GoreTracker(n_birth=3)  # iter6: stripe gores need 3 frames
-        self.div = DivergenceGore()
+        self.gore = GoreTracker(n_birth=fr10(3, f, 2), n_death=fr10(4, f, 2))  # iter6: stripe gores need 3 frames
+        self.div = DivergenceGore(n_persist=fr10(3, f, 2), hist=fr10(12, f, 4))
+        self.lane_min_hits = fr10(4, f, 2)
         self.n_split_frames = 0
         self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
         self.anchor = LaneAnchor(fps=fps)  # iter12: lane-anchored coast
@@ -1106,7 +1147,8 @@ class StageLines:
         self.last_raw = {}; self.last_raw_held = {}
         comps = components(paint_bev, res)
         chains, stripes = extract_chains(comps)
-        lanes = clean_lanes([_legacy(r) for r in self.lanes.step(k, [smooth_chain(c) for c in chains])])
+        lanes = clean_lanes([_legacy(r) for r in self.lanes.step(k, [smooth_chain(c) for c in chains])],
+                            min_hits=getattr(self, "lane_min_hits", 4))
         road_f = cv2.morphologyEx((road_bev | paint_bev).astype(np.uint8), cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8)) > 0
         ed = edge_chains(road_f, res, valid=cv2.erode(valid_bev.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0)
         if np.isfinite(ed["split_in"]).any():
@@ -1181,15 +1223,39 @@ class StageLines:
             h = frag_extend(h, sd, lanes)  # iter11
             oth = next((e for e in edges if e is not None and e.get("role") == ("main_R" if role == "main_L" else "main_L")), None)
             self.anchor.learn(role, h, sd, lanes, oth)  # iter12: lane-anchored coast
+            h0 = h
             h = self.anchor.fill(role, h, sd, lanes, oth)
+            h = self._car_clear(h, h0, sd, cars, oth, lanes)  # iter13
+            self.anchor.note(role, h)
             if h is not None:
                 h["flare"] = is_flared(h.get("xg"), sd, lanes)
             if cur:
-                edges[edges.index(cur[0])] = h
+                if h is None:  # iter13: a coasted line dropped by the car clearance
+                    edges.remove(cur[0])
+                else:
+                    edges[edges.index(cur[0])] = h
             elif h is not None:
                 edges.append(h)
         fg = self.div.step(lanes, edges)
         return edges, fg
+
+    def _car_clear(self, h, h0, side, cars, oth, lanes):
+        """iter13: a synthetic main edge (anchored, or an EdgeHold coast) is kept out of car footprints (car_clear).
+        A live edge only extended by anchored near samples falls back to the unextended edge if the extension enters a
+        car; a fully synthetic line that cannot be pushed clear is dropped (no edge this frame)."""
+        if not EDGE_CAR_CLEAR or h is None or not cars:
+            return h
+        if not _synthetic(h):
+            return h
+        xc, st = car_clear(h["xg"], side, cars, _ref_slope(oth["xg"] if oth is not None else None, lanes))
+        self.n_car = getattr(self, "n_car", {}); self.n_car[st] = self.n_car.get(st, 0) + 1
+        if st == "clear":
+            return h
+        if h.get("anchored") and not h.get("held"):  # live edge + anchored near samples
+            return h0 if st == "drop" else _zrange(dict(h, xg=xc, car_push=True), xc)
+        if st == "drop":
+            return None
+        return _zrange(dict(h, xg=xc, car_push=True), xc)
 
     def events(self):
         return self.lanes.events + [e for t in self.edges.values() for e in t.events]
@@ -1497,6 +1563,7 @@ def lane_backfill(frames, s, fps, max_s=None, z_ref=10.0, min_hits=4, dup_m=0.8)
     in frame j) and, when that leaves z_ref uncovered, extended to its frame-k0 near end along its near slope (<= the
     travel, a few metres). Not done when a lane already lies within dup_m at z_ref on that frame. Marked
     'backfill': True. Only the clip start: a mid-clip birth is a real new line."""
+    min_hits = fr10(min_hits, fps, 2)  # iter13: time base below 10 fps
     max_s = LANE_BACKFILL_S if max_s is None else max_s
     kmax = int(round(max_s * fps))
     if kmax < 1 or not frames:
@@ -1547,6 +1614,7 @@ def edge_backfill(frames, s, fps, lanes=None, max_s=None, z_ref=10.0, min_hits=4
     is present >= min_hits frames from its first frame) is copied back into the earlier frames that have no edge of
     that role, moved by the ego travel and extended to its near end along its near slope; the copy must pass trim_edge
     against that frame's lanes (if given). Marked 'backfill': True."""
+    min_hits = fr10(min_hits, fps, 2)  # iter13: time base below 10 fps
     max_s = EDGE_BACKFILL_S if max_s is None else max_s
     kmax = int(round(max_s * fps))
     if kmax < 1 or not frames:
@@ -1640,6 +1708,141 @@ def edge_backfill(frames, s, fps, lanes=None, max_s=None, z_ref=10.0, min_hits=4
             fz = ZS[fj]
             out[j].append(dict(r0, xg=xj, zmin=float(fz.min()), zmax=float(fz.max()), held=False, backfill=True,
                                kerb_occ=False, kerb_alpha=0.0))
+    return out
+
+
+# iter13: clip-start edges anchored to the frame's own lane / opposite edge (frame-0 completeness) when the iter11-12
+# copy of the first live edge is rejected (diagonal / kinked) or leaves a partial edge short of z_ref
+EDGE_ANCHOR_BACKFILL = os.environ.get("FBEV_EDGE_ANCHOR_BACKFILL", "1") == "1"
+
+
+def _anchor_offset(e, side, lanes, other, iz):
+    """offset of a live main edge at ZS[iz] against (a) the nearest same-side lane (>= 0.5 m outside it), else (b) the
+    opposite main edge (>= 2.5 m), each only if the two run parallel (|slope diff| <= EDGE_ANCHOR_DEV over z <= 25 m).
+    Returns (kind, offset) or None. (LaneAnchor's learning rule, for the offline clip-start pass.)"""
+    x = np.asarray(e["xg"], float)
+    if not np.isfinite(x[iz]):
+        return None
+    for kind, ref, mn in (("lane", _nearest_lane_x(lanes, side, ZS[iz]), 0.5),
+                          ("edge", None if other is None else np.asarray(other["xg"], float), 2.5)):
+        if ref is None:
+            continue
+        m = np.isfinite(x) & np.isfinite(ref) & (ZS <= 25.0)
+        if m.sum() < 8 or not np.isfinite(ref[iz]):
+            continue
+        if abs(float(np.polyfit(ZS[m], x[m] - ref[m], 1)[0])) > EDGE_ANCHOR_DEV:
+            continue
+        off = float(x[iz] - ref[iz])
+        if side * off >= mn:
+            return kind, off
+    return None
+
+
+def edge_anchor_backfill(frames, s, fps, lanes, max_s=None, z_ref=10.0):
+    """iter13 (frame 0 on munich R, a2d2b L): for each main role, the frames before its first live edge reaching z_ref
+    (within max_s = EDGE_BACKFILL_S) that still have no edge at z_ref get reference + offset: the offset of that first
+    live edge against its nearest same-side lane (else the opposite main edge), if parallel (_anchor_offset); the
+    reference is the same lane kind in frame j (nearest same-side lane / the opposite main edge there). The line must
+    pass trim_edge and reach z_ref. A partial edge in frame j only gets the samples below its near end, shifted to join
+    it, if the gap there is <= 0.6 m. Marked backfill + anchored."""
+    max_s = EDGE_BACKFILL_S if max_s is None else max_s
+    kmax = int(round(max_s * fps))
+    if not EDGE_ANCHOR_BACKFILL or kmax < 1 or not frames or lanes is None:
+        return frames
+    out = [list(fr) for fr in frames]
+    iz = int(np.argmin(np.abs(ZS - z_ref)))
+
+    def rec(fr, role):
+        return next((e for e in fr if e.get("role") == role and e.get("xg") is not None), None)
+
+    def lane_list(j):
+        return [r for r in lanes[j] if r.get("xg") is not None and not r.get("fallback")] if j < len(lanes) else []
+
+    for role, sd in (("main_L", -1), ("main_R", 1)):
+        orole = "main_R" if role == "main_L" else "main_L"
+        k1 = None
+        for k, fr in enumerate(out[: kmax + 1]):
+            r = rec(fr, role)
+            if r is not None and np.isfinite(np.asarray(r["xg"], float)[iz]):
+                k1 = k
+                break
+        if not k1:
+            continue  # present at frame 0 already, or never within the window
+        src = None
+        for k in range(k1, min(len(out), k1 + int(round(0.5 * fps)) + 1)):  # first parallel live edge within 0.5 s
+            r = rec(frames[k], role)
+            if r is None or r.get("held") or r.get("backfill") or r.get("anchored") or r.get("kerb_occ"):
+                continue
+            o = rec(frames[k], orole)
+            got = _anchor_offset(r, sd, lane_list(k), o if o is not None and not o.get("held") else None, iz)
+            if got is not None:
+                src = (k, r, got)
+                break
+        if src is None:
+            continue
+        _, r0, (kind, off) = src
+        for j in range(k1):
+            ej = rec(out[j], role)
+            if ej is not None and np.isfinite(np.asarray(ej["xg"], float)[iz]):
+                continue
+            lj = lane_list(j)
+            if kind == "lane":
+                ref = _nearest_lane_x(lj, sd, z_ref)
+            else:
+                o = rec(out[j], orole); ref = None if o is None else np.asarray(o["xg"], float)
+            if ref is None or not np.isfinite(ref[iz]):
+                continue
+            x = np.where(np.isfinite(ref), ref + off, np.nan); x[ZS > 40.0] = np.nan
+            if ej is not None:
+                ex = np.asarray(ej["xg"], float); fe = np.isfinite(ex)
+                if fe.sum() < 2:
+                    continue
+                i0 = int(np.flatnonzero(fe)[0])
+                if not np.isfinite(x[i0]) or abs(x[i0] - ex[i0]) > 0.6:
+                    continue
+                xn = ex.copy(); m = (np.arange(len(ZS)) < i0) & np.isfinite(x) & (ZS >= z_ref - 1e-6)
+                xn[m] = x[m] + (ex[i0] - x[i0])
+                xt = trim_edge(xn, sd, lj)
+                if xt is None or not np.isfinite(xt[iz]) or (fe & ~np.isfinite(xt)).any():
+                    continue
+                fz = ZS[np.isfinite(xt)]
+                out[j][out[j].index(ej)] = dict(ej, xg=xt, zmin=float(fz.min()), zmax=float(fz.max()), backfill=True,
+                                                anchored=True)
+                continue
+            xt = trim_edge(x, sd, lj)
+            if xt is None or not np.isfinite(xt[iz]) or np.isfinite(xt).sum() < 4:
+                continue
+            fz = ZS[np.isfinite(xt)]
+            out[j].append(dict(r0, xg=xt, zmin=float(fz.min()), zmax=float(fz.max()), held=False, backfill=True,
+                               anchored=True, kerb_occ=False, kerb_alpha=0.0, c=np.zeros(3)))
+    return out
+
+
+def edge_car_clear(frames, cars, lanes=None):
+    """iter13: the final pass (after centre smoothing and the clip-start backfills, which can move a cleared line back
+    into a car: munich R f174-177, f242) of car_clear over every SYNTHETIC main edge: anchored, EdgeHold-coasted
+    (hold_age) or backfilled. cars[k] = car_footprints of frame k. Pushed lines get car_push=True; lines that cannot be
+    pushed clear are removed. Live and kerb-pushed measurements are not touched."""
+    if not EDGE_CAR_CLEAR or cars is None:
+        return frames
+    out = []
+    for k, fr in enumerate(frames):
+        ck = cars[k] if k < len(cars) else None
+        if not ck:
+            out.append(fr); continue
+        lk = [r for r in (lanes[k] if lanes is not None and k < len(lanes) else []) if r.get("xg") is not None and not r.get("fallback")]
+        row = []
+        for e in fr:
+            role = e.get("role")
+            if role not in ("main_L", "main_R") or not _synthetic(e) or e.get("xg") is None:
+                row.append(e); continue
+            sd = -1 if role == "main_L" else 1
+            o = next((x for x in fr if x.get("role") == ("main_R" if sd < 0 else "main_L") and x.get("xg") is not None), None)
+            xc, st = car_clear(e["xg"], sd, ck, _ref_slope(o["xg"] if o is not None else None, lk))
+            if st == "drop":
+                continue
+            row.append(e if st == "clear" else _zrange(dict(e, xg=xc, car_push=True), xc))
+        out.append(row)
     return out
 
 
@@ -1756,6 +1959,129 @@ def kerb_apply(x, side, A, B, z_end, max_push=None):
     push = np.clip(A + B * ZS - q, 0.0, max_push) * np.clip(1.0 - (ZS - z_end) / 3.0, 0.0, 1.0)
     qn = np.where(f, q + push, np.nan)
     return side * qn, bool((push[f] > 0.05).any())
+
+
+EDGE_CAR_CLEAR = os.environ.get("FBEV_EDGE_CAR_CLEAR", "1") == "1"  # iter13: synthetic edges never inside a car
+EDGE_CAR_TOL = float(os.environ.get("FBEV_EDGE_CAR_TOL", "0.2"))
+# the car's lateral extent = its inner (ego-side) box flank + EDGE_CAR_W: for an obliquely seen parked car the box also
+# spans the visible side, so the far flank lifted at the contact row lies metres beyond the car (city: -9.3 m for a car
+# whose inner flank is at -4.9 m)
+EDGE_CAR_W = float(os.environ.get("FBEV_EDGE_CAR_W", "2.0"))
+EDGE_CAR_COAST = os.environ.get("FBEV_EDGE_CAR_COAST", "0") == "1"  # iter13: 1 = also car-clear tracker-coasted edges (rejected: A2D2 edge wjit +0.03)
+
+
+def _synthetic(e):
+    """no measurement this frame: anchored, backfilled, EdgeHold-coasted (hold_age) or BEV-tracker-coasted (held)."""
+    if e.get("anchored") or e.get("backfill"):
+        return True
+    return bool(e.get("held")) and ("hold_age" in e or EDGE_CAR_COAST)
+
+
+def _car_q(c, side):
+    """outward-positive (inner, outer) of a car footprint: inner box flank, outer = min(box far flank, inner + W)."""
+    inner, outer = (c["xl"], c["xr"]) if side > 0 else (c["xr"], c["xl"])
+    return side * inner, min(side * outer, side * inner + EDGE_CAR_W)
+
+
+def car_inside(x, side, cars, tol=None, car_len=KERB_CAR_LEN_M):
+    """iter13: the cars (on the edge's side) whose BEV footprint the line enters: a sample at z in [zb - 0.5,
+    zb + car_len] lies strictly inside the car's lateral extent (_car_q: inner flank .. inner + EDGE_CAR_W), tol m
+    from each side (outward-positive). Returns the list of such cars."""
+    tol = EDGE_CAR_TOL if tol is None else tol
+    if x is None or not cars:
+        return []
+    x = np.asarray(x, float); f = np.isfinite(x); q = side * x
+    hit = []
+    for c in cars:
+        qi, qo = _car_q(c, side)
+        if qo < 1.0:
+            continue
+        lo, hi = qi + tol, qo - tol
+        m = f & (ZS >= c["zb"] - 0.5) & (ZS <= c["zb"] + car_len)
+        if m.any() and ((q[m] > lo) & (q[m] < hi)).any():
+            hit.append(c)
+    return hit
+
+
+EDGE_CAR_PUSH = os.environ.get("FBEV_EDGE_CAR_PUSH", "line")  # iter13: 'line' (kerb geometry first) or 'local' first
+
+
+def _push_line(x, side, cars, ref_slope, max_push, car_len):
+    """the kerb rule's geometry: the road-heading line clearing the outer sides of the cars the line enters (re-checked
+    against all cars up to 3 times: a push out of one car can enter the next one)."""
+    B = side * ref_slope
+    hit = car_inside(x, side, cars); used = []
+    for _ in range(3):
+        used += [c for c in hit if c not in used]
+        # the line must clear each car over its whole z range: bind at the near end (zb - 0.5) for an outward road
+        # heading, at the far end (zb + car_len) for an inward one (city L curves back in at 30-40 m)
+        A = max(_car_q(c, side)[1] + EDGE_CAR_TOL - B * (c["zb"] + car_len if B < 0 else c["zb"] - 0.5) for c in used)
+        z_end = max(c["zb"] for c in used) + car_len + 3.0
+        xp, _ = kerb_apply(x, side, A, B, z_end, max_push)  # always from the original line (one capped push)
+        hit = car_inside(xp, side, cars)
+        if not hit:
+            return xp
+    return None
+
+
+def _push_local(x, side, cars, max_push, car_len):
+    """only over the z range of each car the line enters (+ 3 m linear ramps): the line can pass between two rows
+    (lane_split f0: a parked car in front of a second one further out)."""
+    x = np.asarray(x, float); f = np.isfinite(x); q = side * x
+    mp = KERB_MAX_PUSH_M if max_push is None else max_push
+    tgt = np.full(len(ZS), -np.inf)
+    for c in car_inside(x, side, cars):
+        qo = _car_q(c, side)[1] + EDGE_CAR_TOL
+        z0, z1 = c["zb"] - 0.5, c["zb"] + car_len
+        w = np.clip(1.0 - np.maximum(z0 - ZS, ZS - z1).clip(0.0) / 3.0, 0.0, 1.0)
+        tgt = np.maximum(tgt, np.where(w > 0, q + w * (qo - q), -np.inf))
+    push = np.clip(np.where(np.isfinite(tgt), tgt - q, 0.0), 0.0, mp)
+    xl = np.where(f, side * (q + push), np.nan)
+    return None if car_inside(xl, side, cars) else xl
+
+
+def car_clear(x, side, cars, ref_slope, max_push=None, car_len=KERB_CAR_LEN_M):
+    """iter13 (GPU iter12 munich R f190-196, f250-251 anchored line, f13 backfill, a2d2b L f14): a SYNTHETIC main edge
+    (anchored, EdgeHold-coasted, backfilled: no measurement this frame) must not run through a parked car. If it
+    enters cars' footprints (car_inside), it is pushed out: the kerb rule's road-heading line clearing those cars'
+    outer sides (_push_line), else a local push over each car's z range (_push_local); EDGE_CAR_PUSH='local' tries
+    them the other way round. Only outward, capped at max_push.
+    Returns (x, status): 'clear' (untouched), 'pushed', or 'drop' (no push clears it: no edge)."""
+    if not car_inside(x, side, cars):
+        return x, "clear"
+    order = (_push_line, _push_local) if EDGE_CAR_PUSH == "line" else (_push_local, _push_line)
+    for fn in order:
+        xp = fn(x, side, cars, ref_slope, max_push, car_len) if fn is _push_line else fn(x, side, cars, max_push, car_len)
+        if xp is not None:
+            return xp, "pushed"
+    if EDGE_CAR_TRIM:
+        xt = _trim_before_cars(x, side, cars, car_len)
+        if xt is not None:
+            return xt, "trimmed"
+    return x, "drop"
+
+
+EDGE_CAR_TRIM = os.environ.get("FBEV_EDGE_CAR_TRIM", "1") == "1"  # iter13: cut short in front of the car instead of dropping
+EDGE_CAR_TRIM_MIN = float(os.environ.get("FBEV_EDGE_CAR_TRIM_MIN", "4.0"))  # m of line that must remain
+
+
+def _trim_before_cars(x, side, cars, car_len):
+    """iter13 (CPU smoke lane_split R f1-2: a backfilled line that no push clears was dropped, -6.7 pts presence):
+    end the synthetic line 0.5 m before the nearest car it enters (repeated while it still enters one). Kept only if
+    >= EDGE_CAR_TRIM_MIN m remain, else None."""
+    xt = np.array(x, float)
+    for _ in range(4):
+        hit = car_inside(xt, side, cars, car_len=car_len)
+        if not hit:
+            f = np.isfinite(xt)
+            return xt if f.any() and ZS[f].max() - ZS[f].min() >= EDGE_CAR_TRIM_MIN else None
+        xt[ZS >= min(c["zb"] for c in hit) - 0.5] = np.nan
+    return None
+
+
+def _zrange(e, xc):
+    f = np.isfinite(np.asarray(xc, float))
+    return dict(e, zmin=float(ZS[f].min()), zmax=float(ZS[f].max())) if f.any() else e
 
 
 KERB_ENTER = int(os.environ.get("FBEV_KERB_ENTER", "3"))  # consecutive bounded frames before the kerb line applies

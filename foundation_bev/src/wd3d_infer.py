@@ -37,6 +37,8 @@ except Exception as e:  # noqa: BLE001
 OBJ_PROMPTS = {"car", "person", "bicycle"}
 
 cams = json.load(open(os.path.join(a.inputs, "cams.json")))
+if os.path.exists(os.path.join(a.inputs, "cams_private.json")):  # iter13: private fc1_merge camera (local only)
+    cams.update(json.load(open(os.path.join(a.inputs, "cams_private.json"))))
 os.makedirs(a.outdir, exist_ok=True)
 t_build = time.time()
 model = build_model(checkpoint=a.ckpt, score_threshold=a.score, score_3d_threshold=a.score3d,

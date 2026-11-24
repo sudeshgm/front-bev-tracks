@@ -1,12 +1,14 @@
 """iter12: draw lanes (green) / main edges (orange; anchored = magenta, backfill = cyan, held = dashed-ish thin) of
 several runs on the raw frame, side by side, each with a small BEV panel.
-usage: overlay_runs.py --ds DS --clip munich --frames 165,565 --out DIR LABEL=RUN [LABEL=RUN ...]"""
+usage: overlay_runs.py --ds DS --clip munich --frames 165,565 --out DIR [--dets DETS_DUMP_DIR] LABEL=RUN [LABEL=RUN ...]
+iter13: --dets draws car image boxes (grey) and their BEV footprints as used by car_inside (grey boxes in the BEV panel)."""
 import argparse, json, os, sys
 import cv2, numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 import bev_smooth as BS
+import lines_mt as LM
 ap = argparse.ArgumentParser(); ap.add_argument("--ds", required=True); ap.add_argument("--clip", required=True)
-ap.add_argument("--frames", required=True); ap.add_argument("--out", required=True); ap.add_argument("runs", nargs="+")
+ap.add_argument("--frames", required=True); ap.add_argument("--dets", default=""); ap.add_argument("--out", required=True); ap.add_argument("runs", nargs="+")
 a = ap.parse_args(); os.makedirs(a.out, exist_ok=True)
 runs = [r.split("=", 1) for r in a.runs]
 P = {l: json.load(open(f"{r}/polylines/{a.clip}_polylines.json")) for l, r in runs}
@@ -14,6 +16,7 @@ d0 = next(iter(P.values())); K = d0["K"]
 gm = BS.GroundModel(K["fx"], K["fy"], K["cx"], K["cy"], d0["cam_height_m"], d0["ground"]["pitch_rad"])
 cap = cv2.VideoCapture(f"{a.ds}/{a.clip}.mp4")
 want = sorted(int(v) for v in a.frames.split(","))
+DE = json.load(open(f"{a.dets}/{a.clip}_dets_ego.json"))["frames"] if a.dets else None
 k = 0; ok = True
 while ok and want:
     ok, bgr = cap.read()
@@ -36,6 +39,16 @@ while ok and want:
                     if len(uv) >= 2:
                         cv2.polylines(im, [uv.astype(np.int32)], False, col, th)
                     cv2.polylines(bev, [np.array([bxy(x, z) for x, z in p], np.int32)], False, col, 2)
+            if DE is not None and k < len(DE):
+                boxes = [o["box"] for o in DE[k].get("objs") or [] if o.get("cls") == "car"]
+                for b in boxes:
+                    cv2.rectangle(im, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (170, 170, 170), 1)
+                for c in LM.car_footprints(boxes, gm.lift):
+                    for sd in (-1, 1):
+                        qi, qo = LM._car_q(c, sd)
+                        if qo < 1.0: continue
+                        p1 = bxy(sd * qi, c["zb"] - 0.5); p2 = bxy(sd * qo, c["zb"] + LM.KERB_CAR_LEN_M)
+                        cv2.rectangle(bev, p1, p2, (150, 150, 150), 1)
             for z in (10, 20, 30):
                 cv2.putText(bev, f"{z}m", bxy(-12, z), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
                 cv2.line(bev, bxy(-12, z), bxy(12, z), (60, 60, 60), 1)

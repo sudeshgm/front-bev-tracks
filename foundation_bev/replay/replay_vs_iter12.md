@@ -1,0 +1,114 @@
+| clip | metric | gpu12 | rep12 | iter13 | YOLO |
+|---|---|---|---|---|---|
+| sample | accel | 0.095 | 0.095 | 0.095 |  |
+| sample | idsw | 0.000 | 0.000 | 0.000 |  |
+| sample | lane pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |
+| sample | lane wjit | 0.001 | 0.002 | 0.002 | 0.006 |
+| sample | lane jit2 L/R | 0.002/0.002 | 0.003/0.004 | 0.003/0.004 | 0.019/0.005 |
+| sample | edge pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |  |
+| sample | edge wjit | 0.019 | 0.020 | 0.020 |  |
+| sample | edge jit2 L/R | 0.020/0.009 | 0.018/0.010 | 0.018/0.010 |  |
+| sample | lane wjit live | 0.001 | 0.002 | 0.002 | |
+| sample | edge wjit live | 0.019 | 0.021 | 0.021 | |
+| sample | gores | — | — | — | |
+| sample | f0 laneL,R edgeL,R | ✓✓✓✓ | ✓✓✓✓ | ✓✓✓✓ | |
+| exit | accel | 0.546 | 0.546 | 0.546 |  |
+| exit | idsw | 0.000 | 0.000 | 0.000 |  |
+| exit | lane pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |
+| exit | lane wjit | 0.007 | 0.007 | 0.007 | 0.007 |
+| exit | lane jit2 L/R | 0.005/0.008 | 0.005/0.009 | 0.005/0.009 | 0.013/0.009 |
+| exit | edge pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |  |
+| exit | edge wjit | 0.042 | 0.042 | 0.042 |  |
+| exit | edge jit2 L/R | 0.016/0.024 | 0.016/0.024 | 0.016/0.024 |  |
+| exit | lane wjit live | 0.007 | 0.007 | 0.007 | |
+| exit | edge wjit live | 0.048 | 0.048 | 0.048 | |
+| exit | gores | 21-26 | 21-26 | 21-26 | |
+| exit | f0 laneL,R edgeL,R | ✓✓✓✓ | ✓✓✓✓ | ✓✓✓✓ | |
+| late | accel | 0.534 | 0.534 | 0.534 |  |
+| late | idsw | 0.000 | 0.000 | 0.000 |  |
+| late | lane pres L/R | 97.5/100.0 | 97.5/100.0 | 97.5/100.0 | 100.0/100.0 |
+| late | lane wjit | 0.006 | 0.006 | 0.006 | 0.009 |
+| late | lane jit2 L/R | 0.011/0.012 | 0.011/0.012 | 0.011/0.012 | 0.014/0.014 |
+| late | edge pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |  |
+| late | edge wjit | 0.034 | 0.034 | 0.034 |  |
+| late | edge jit2 L/R | 0.020/0.015 | 0.020/0.015 | 0.020/0.015 |  |
+| late | lane wjit live | 0.005 | 0.006 | 0.006 | |
+| late | edge wjit live | 0.035 | 0.035 | 0.035 | |
+| late | gores | — | — | — | |
+| late | f0 laneL,R edgeL,R | ✓✓✓✓ | ✓✓✓✓ | ✓✓✓✓ | |
+| final | accel | 0.574 | 0.574 | 0.574 |  |
+| final | idsw | 0.000 | 0.000 | 0.000 |  |
+| final | lane pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |
+| final | lane wjit | 0.006 | 0.006 | 0.006 | 0.008 |
+| final | lane jit2 L/R | 0.014/0.004 | 0.015/0.004 | 0.015/0.004 | 0.024/0.017 |
+| final | edge pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |  |
+| final | edge wjit | 0.022 | 0.022 | 0.022 |  |
+| final | edge jit2 L/R | 0.029/0.023 | 0.029/0.023 | 0.029/0.023 |  |
+| final | lane wjit live | 0.006 | 0.005 | 0.005 | |
+| final | edge wjit live | 0.023 | 0.023 | 0.023 | |
+| final | gores | — | — | — | |
+| final | f0 laneL,R edgeL,R | ✓✓✓✓ | ✓✓✓✓ | ✓✓✓✓ | |
+| city | accel | 0.548 | 0.548 | 0.548 |  |
+| city | idsw | 0.000 | 0.000 | 0.000 |  |
+| city | lane pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |
+| city | lane wjit | 0.001 | 0.001 | 0.001 | 0.005 |
+| city | lane jit2 L/R | 0.002/0.001 | 0.002/0.001 | 0.002/0.001 | 0.001/0.004 |
+| city | edge pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |  |
+| city | edge wjit | 0.037 | 0.037 | 0.054 |  |
+| city | edge jit2 L/R | 0.021/0.010 | 0.021/0.010 | 0.023/0.010 |  |
+| city | lane wjit live | 0.001 | 0.001 | 0.001 | |
+| city | edge wjit live | 0.054 | 0.054 | 0.054 | |
+| city | gores | — | — | — | |
+| city | f0 laneL,R edgeL,R | ✓✓✓✓ | ✓✓✓✓ | ✓✓✓✓ | |
+| lane_split | accel | 0.951 | 0.951 | 0.951 |  |
+| lane_split | idsw | 0.000 | 0.000 | 0.000 |  |
+| lane_split | lane pres L/R | 100.0/73.3 | 100.0/73.3 | 100.0/73.3 | 76.7/26.7 |
+| lane_split | lane wjit | 0.131 | 0.131 | 0.131 | 0.092 |
+| lane_split | lane jit2 L/R | 0.011/0.022 | 0.011/0.023 | 0.011/0.023 | 0.257/0.721 |
+| lane_split | edge pres L/R | 100.0/100.0 | 100.0/100.0 | 100.0/100.0 |  |
+| lane_split | edge wjit | 0.115 | 0.115 | 0.115 |  |
+| lane_split | edge jit2 L/R | 0.042/0.042 | 0.042/0.042 | 0.042/0.042 |  |
+| lane_split | lane wjit live | 0.131 | 0.131 | 0.131 | |
+| lane_split | edge wjit live | 0.127 | 0.127 | 0.127 | |
+| lane_split | gores | — | — | — | |
+| lane_split | f0 laneL,R edgeL,R | ✓✗✓✓ | ✓✗✓✓ | ✓✗✓✓ | |
+| munich | accel | 0.655 | 0.655 | 0.655 |  |
+| munich | idsw | 0.000 | 0.000 | 0.000 |  |
+| munich | lane pres L/R | 85.9/65.4 | 85.9/65.4 | 85.9/65.4 | — |
+| munich | lane wjit | 0.006 | 0.006 | 0.006 | — |
+| munich | lane jit2 L/R | 0.003/0.002 | 0.003/0.002 | 0.003/0.002 | — |
+| munich | edge pres L/R | 100.0/95.8 | 100.0/95.8 | 100.0/96.8 |  |
+| munich | edge wjit | 0.041 | 0.040 | 0.037 |  |
+| munich | edge jit2 L/R | 0.010/0.023 | 0.010/0.023 | 0.010/0.020 |  |
+| munich | lane wjit live | 0.006 | 0.006 | 0.006 | |
+| munich | edge wjit live | 0.038 | 0.038 | 0.038 | |
+| munich | gores | 760-765 | 760-765 | 760-765 | |
+| munich | f0 laneL,R edgeL,R | ✓✓✓✗ | ✓✓✓✗ | ✓✓✓✗ | |
+| a2d2a | accel | 0.495 | 0.495 | 0.495 |  |
+| a2d2a | idsw | 0.000 | 0.000 | 0.000 |  |
+| a2d2a | lane pres L/R | 15.1/26.7 | 15.1/26.7 | 15.1/26.7 | — |
+| a2d2a | lane wjit | — | — | — | — |
+| a2d2a | lane jit2 L/R | 0.008/0.007 | 0.008/0.008 | 0.008/0.008 | — |
+| a2d2a | edge pres L/R | 97.7/98.8 | 97.7/98.8 | 97.7/98.8 |  |
+| a2d2a | edge wjit | 0.062 | 0.061 | 0.062 |  |
+| a2d2a | edge jit2 L/R | 0.035/0.030 | 0.035/0.030 | 0.036/0.030 |  |
+| a2d2a | lane wjit live | — | — | — | |
+| a2d2a | edge wjit live | 0.065 | 0.065 | 0.065 | |
+| a2d2a | gores | — | — | — | |
+| a2d2a | f0 laneL,R edgeL,R | ✗✓✓✓ | ✗✓✓✓ | ✗✓✓✓ | |
+| a2d2b | accel | 0.821 | 0.821 | 0.821 |  |
+| a2d2b | idsw | 0.000 | 0.000 | 0.000 |  |
+| a2d2b | lane pres L/R | 8.100/2.300 | 8.100/2.300 | 8.100/2.300 | — |
+| a2d2b | lane wjit | — | — | — | — |
+| a2d2b | lane jit2 L/R | 0.012/0.035 | 0.012/0.035 | 0.012/0.035 | — |
+| a2d2b | edge pres L/R | 97.1/100.0 | 97.1/100.0 | 99.4/100.0 |  |
+| a2d2b | edge wjit | 0.056 | 0.056 | 0.056 |  |
+| a2d2b | edge jit2 L/R | 0.038/0.032 | 0.038/0.032 | 0.038/0.032 |  |
+| a2d2b | lane wjit live | — | — | — | |
+| a2d2b | edge wjit live | 0.056 | 0.056 | 0.056 | |
+| a2d2b | gores | — | — | — | |
+| a2d2b | f0 laneL,R edgeL,R | ✗✗✗✓ | ✗✗✗✓ | ✗✗✓✓ | |
+
+munich R z10 gpu12 862 -> rep12 862: gained []  lost []
+
+munich R z10 gpu12 862 -> iter13 871: gained [148, 149, 150, 152, 154, 155, 562, 563, 570, 571]  lost [615]

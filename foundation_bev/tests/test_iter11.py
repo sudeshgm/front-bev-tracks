@@ -51,7 +51,14 @@ def test_diag_fragment_veto():
     assert not LM.is_diag_fragment({"xg": _line(4.0, 0.02, 20.5, 24.5)}, lanes)   # along the road
     assert not LM.is_diag_fragment({"xg": _line(4.0, 0.37, 9.5, 14.0)}, lanes)    # reaches z 10
     assert not LM.is_diag_fragment({"xg": _line(4.0, 0.37, 12.0, 30.0)}, lanes)   # not short
-    assert not LM.is_diag_fragment(dict(frag, held=True), lanes)
+    assert not LM.is_diag_fragment(dict(frag, held=True, hold_age=2), lanes)   # EdgeHold coast: never vetoed
+    assert LM.is_diag_fragment(dict(frag, held=True), lanes)   # iter13: a tracker-coasted fragment is vetoed too
+    old = LM.EDGE_FRAG_COAST
+    try:
+        LM.EDGE_FRAG_COAST = False
+        assert not LM.is_diag_fragment(dict(frag, held=True), lanes)                 # iter11-12 behaviour
+    finally:
+        LM.EDGE_FRAG_COAST = old
 
 
 def test_post_edges_hold_coasts_over_a_vetoed_fragment():

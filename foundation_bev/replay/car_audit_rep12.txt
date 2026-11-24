@@ -1,0 +1,9 @@
+kitti_highway_sample: synthetic (anchored/backfill/edgehold) inside a car: 0  
+kitti_highway_exit_approach: synthetic (anchored/backfill/edgehold) inside a car: 0  
+kitti_highway_late: synthetic (anchored/backfill/edgehold) inside a car: 0  
+kitti_highway_final: synthetic (anchored/backfill/edgehold) inside a car: 0  
+kitti_city_cyclist_candidate: synthetic (anchored/backfill/edgehold) inside a car: 2  backfill=2[L0 L1] live=15[L2 L3 L4 L5 L6 L7 L8 L9 L10 L11 L12 L13 ...]
+kitti_lane_split_candidate: synthetic (anchored/backfill/edgehold) inside a car: 1  backfill=1[R0] held_tracker=2[L18 L19] kerb=2[R15 R16] live=21[R3 R4 R5 R6 R7 R8 R9 R10 R11 R12 R13 R14 ...]
+munich: synthetic (anchored/backfill/edgehold) inside a car: 9  anchored=8[R190 R250 R251 R541 R546 R547 R548 R549] backfill=1[R13] held_tracker=18[R4 R5 R6 R7 R12 R162 R474 R475 R650 R651 R656 R657 ...] kerb=63[R14 R15 R16 R17 R28 R29 R32 R33 R40 R41 R42 R43 ...] live=231[R2 R3 R88 R89 R434 R435 R442 R443 R444 R445 R471 R472 ...]
+a2d2a: synthetic (anchored/backfill/edgehold) inside a car: 3  backfill=3[L0 L1 L2] held_tracker=19[L4 L5 L6 L12 L13 L20 L27 L28 L59 L92 L93 L94 ...] kerb=44[L15 L53 L60 R68 L72 L73 L74 L75 L76 L77 L78 L79 ...] live=115[L3 L7 L8 L9 L10 L11 L14 L16 L17 L18 L19 L21 ...]
+a2d2b: synthetic (anchored/backfill/edgehold) inside a car: 1  anchored=1[L14] held_tracker=12[L10 L11 L38 L40 L70 L71 L82 L83 L89 L91 L107 L108] live=131[L9 L15 L16 L17 L18 L19 L20 L21 L22 L23 L24 L27 ...]

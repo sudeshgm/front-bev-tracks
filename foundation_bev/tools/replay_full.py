@@ -38,7 +38,9 @@ def pack(r):
             "held": bool(r.get("held")), "parent": r.get("parent"), "fork_z": r.get("fork_z"), "fallback": bool(r.get("fallback")),
             "role": r.get("role"), "flare": bool(r.get("flare")), "kerb_occ": bool(r.get("kerb_occ")),
             "backfill": bool(r.get("backfill")), "kerb_alpha": round(float(r.get("kerb_alpha", 0.0)), 3),
-            "frag": bool(r.get("frag_override")), "anchored": bool(r.get("anchored"))}
+            "frag": bool(r.get("frag_override")), "anchored": bool(r.get("anchored")),
+            "hold_src": ("edgehold" if "hold_age" in r else "tracker") if r.get("held") else None,
+            "car_push": bool(r.get("car_push"))}
 
 
 def curve(r, gpu_poly=None):
@@ -58,7 +60,7 @@ for clip in a.clips.split(","):
     ego = {k: np.array([e.get("ego", {}).get(k, 0.0) for e in F]) for k in ("x", "z")}
     s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(ego["x"]), np.diff(ego["z"])))])
     SL = LM.StageLines(fps=fps)
-    lanes_live, edges_live, gores_live, fb_poly = [], [], [], []
+    lanes_live, edges_live, gores_live, fb_poly, cars_live = [], [], [], [], []
     for k, fr in enumerate(F):
         st = fr["step"]
         lanes = [dict(r, xg=grid(r["x"]), kind="lane") for r in st["lanes"]]
@@ -66,7 +68,7 @@ for clip in a.clips.split(","):
             f = np.isfinite(r["xg"])
             r["zmin"], r["zmax"] = (float(Z[f].min()), float(Z[f].max())) if f.any() else (0.0, 0.0)
         boxes = [o_["box"] for o_ in (de[k].get("objs") or []) if o_.get("cls") == "car"] if k < len(de) else []
-        cars = LM.car_footprints(boxes, gm.lift)
+        cars = LM.car_footprints(boxes, gm.lift); cars_live.append(cars)
         ds = float(s[k] - s[k - 1]) if k else 0.0
         ids = {r.get("role"): r for r in fr["edges"]}
         edges = []
@@ -99,6 +101,9 @@ for clip in a.clips.split(","):
     lanes_live = LM.pair_width_smooth(lanes_live, s, fps)
     lanes_live = LM.lane_backfill(lanes_live, s, fps)
     edges_live = LM.edge_backfill(edges_live, s, fps, lanes=lanes_live)
+    if hasattr(LM, "edge_anchor_backfill"):  # iter13 (FBEV_REPLAY_SRC may point at older code)
+        edges_live = LM.edge_anchor_backfill(edges_live, s, fps, lanes_live)
+        edges_live = LM.edge_car_clear(edges_live, cars_live, lanes_live)
     for k, fr in enumerate(F):
         lb = [curve(r, fb_poly[k].get((r.get("side"), r.get("id")))) for r in lanes_live[k]]
         eb = [curve(r) for r in edges_live[k]]

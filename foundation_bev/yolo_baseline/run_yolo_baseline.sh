@@ -34,6 +34,8 @@ fi
 import json, os, sys, cv2
 ds, cams_p, out = sys.argv[1:4]
 cams = json.load(open(cams_p)); mot = json.load(open(os.path.join(ds, "motion_assumptions.json")))
+if os.path.exists(os.path.join(ds, "motion_private.json")):  # iter13: private clip (fc1_merge), local only
+    mot.update(json.load(open(os.path.join(ds, "motion_private.json"))))
 meta = {"videos": {}}
 for c in os.environ["CLIPS"].split():
     cap = cv2.VideoCapture(os.path.join(ds, f"{c}.mp4")); fps = cap.get(cv2.CAP_PROP_FPS) or 10.0
