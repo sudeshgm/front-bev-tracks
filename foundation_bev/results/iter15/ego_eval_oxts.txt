@@ -1,0 +1,18 @@
+kitti_highway_sample           before   speed  25.00 vs  25.69 ( -2.7%)  yaw corr -0.07 mae  0.51 drift   +1.6  path end  3.27 m (lat  1.84) rms  1.82 / 100.2 m  yaw jerk 4.1
+kitti_highway_sample           signfix  speed  25.00 vs  25.69 ( -2.7%)  yaw corr +0.07 mae  0.50 drift   -0.3  path end  2.77 m (lat  0.64) rms  1.63 / 100.2 m  yaw jerk 4.1
+kitti_highway_sample           after    speed  25.00 vs  25.69 ( -2.7%)  yaw corr +0.68 mae  0.11 drift   +0.2  path end  2.69 m (lat  0.03) rms  1.58 / 100.2 m  yaw jerk 0.7
+kitti_highway_exit_approach    before   speed  23.45 vs  24.44 ( -4.0%)  yaw corr -0.36 mae  1.40 drift   -1.5  path end  3.92 m (lat  0.11) rms  2.75 /  95.4 m  yaw jerk 5.3
+kitti_highway_exit_approach    signfix  speed  23.45 vs  24.44 ( -4.0%)  yaw corr +0.36 mae  1.56 drift   +3.6  path end  4.32 m (lat  1.83) rms  2.86 /  95.4 m  yaw jerk 5.3
+kitti_highway_exit_approach    after    speed  25.07 vs  24.44 ( +2.6%)  yaw corr +0.24 mae  0.13 drift   -0.1  path end  2.39 m (lat  0.07) rms  1.01 /  95.4 m  yaw jerk 0.8
+kitti_highway_late             before   speed  16.65 vs  18.35 ( -9.2%)  yaw corr -0.78 mae  3.48 drift   -1.9  path end  6.12 m (lat  1.91) rms  2.96 /  70.7 m  yaw jerk 13.5
+kitti_highway_late             signfix  speed  16.65 vs  18.35 ( -9.2%)  yaw corr +0.78 mae  1.42 drift   +4.7  path end  6.00 m (lat  1.47) rms  2.90 /  70.7 m  yaw jerk 13.5
+kitti_highway_late             after    speed  18.43 vs  18.35 ( +0.4%)  yaw corr +0.66 mae  0.86 drift   +0.8  path end  1.35 m (lat  0.81) rms  1.53 /  70.7 m  yaw jerk 7.0
+kitti_highway_final            before   speed  19.21 vs  19.51 ( -1.5%)  yaw corr -0.35 mae  0.59 drift   -0.8  path end  1.35 m (lat  0.93) rms  0.60 /  56.7 m  yaw jerk 2.5
+kitti_highway_final            signfix  speed  19.21 vs  19.51 ( -1.5%)  yaw corr +0.35 mae  0.59 drift   -1.8  path end  1.38 m (lat  0.98) rms  0.61 /  56.7 m  yaw jerk 2.5
+kitti_highway_final            after    speed  20.28 vs  19.51 ( +4.0%)  yaw corr +0.86 mae  0.21 drift   +0.5  path end  2.12 m (lat  0.17) rms  1.48 /  56.7 m  yaw jerk 1.3
+kitti_city_cyclist_candidate   before   speed  11.27 vs  10.20 (+10.5%)  yaw corr -0.72 mae  0.88 drift   +0.1  path end  3.36 m (lat  0.42) rms  1.52 /  29.4 m  yaw jerk 2.3
+kitti_city_cyclist_candidate   signfix  speed  11.27 vs  10.20 (+10.5%)  yaw corr +0.72 mae  1.28 drift   -3.7  path end  3.48 m (lat  1.00) rms  1.57 /  29.4 m  yaw jerk 2.3
+kitti_city_cyclist_candidate   after    speed  10.81 vs  10.20 ( +6.0%)  yaw corr +0.77 mae  0.41 drift   -0.8  path end  2.00 m (lat  0.18) rms  0.78 /  29.4 m  yaw jerk 1.5
+kitti_lane_split_candidate     before   speed   4.66 vs   5.68 (-18.0%)  yaw corr +0.50 mae 24.42 drift  -71.3  path end  9.84 m (lat  9.48) rms  4.67 /  15.9 m  yaw jerk 11.1
+kitti_lane_split_candidate     signfix  speed   4.66 vs   5.68 (-18.0%)  yaw corr -0.50 mae  2.28 drift   +7.2  path end  2.71 m (lat  0.66) rms  1.46 /  15.9 m  yaw jerk 11.1
+kitti_lane_split_candidate     after    speed   4.66 vs   5.68 (-18.0%)  yaw corr +0.75 mae  1.13 drift   +3.2  path end  2.69 m (lat  0.57) rms  1.47 /  15.9 m  yaw jerk 9.7

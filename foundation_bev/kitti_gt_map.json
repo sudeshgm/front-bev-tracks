@@ -1,0 +1,125 @@
+{
+ "kitti_match": {
+  "kitti_highway_sample": {
+   "date": "2011_10_03",
+   "drive": 42,
+   "start": 300,
+   "n": 40,
+   "oxts_speed_mps": 25.69,
+   "oxts_speed_range": [
+    25.63,
+    25.75
+   ],
+   "oxts_yaw_dps_right": -0.15,
+   "yaw_range": [
+    -0.56,
+    0.14
+   ],
+   "pipe_speed": 25.0,
+   "pipe_src": "prior",
+   "bev_phase": 25.81,
+   "bev_road": 0.79
+  },
+  "kitti_highway_exit_approach": {
+   "date": "2011_10_03",
+   "drive": 42,
+   "start": 719,
+   "n": 40,
+   "oxts_speed_mps": 24.46,
+   "oxts_speed_range": [
+    23.62,
+    25.35
+   ],
+   "oxts_yaw_dps_right": -0.28,
+   "yaw_range": [
+    -0.47,
+    0.3
+   ],
+   "pipe_speed": 23.6,
+   "pipe_src": "bev_phase",
+   "bev_phase": 23.6,
+   "bev_road": null
+  },
+  "kitti_highway_late": {
+   "date": "2011_10_03",
+   "drive": 42,
+   "start": 1100,
+   "n": 40,
+   "oxts_speed_mps": 18.3,
+   "oxts_speed_range": [
+    16.56,
+    19.05
+   ],
+   "oxts_yaw_dps_right": -0.31,
+   "yaw_range": [
+    -1.86,
+    1.4
+   ],
+   "pipe_speed": 16.67,
+   "pipe_src": "bev_phase",
+   "bev_phase": 16.67,
+   "bev_road": null
+  },
+  "kitti_highway_final": {
+   "date": "2011_10_03",
+   "drive": 42,
+   "start": 1140,
+   "n": 30,
+   "oxts_speed_mps": 19.49,
+   "oxts_speed_range": [
+    19.07,
+    20.22
+   ],
+   "oxts_yaw_dps_right": 0.47,
+   "yaw_range": [
+    -0.45,
+    1.52
+   ],
+   "pipe_speed": 19.25,
+   "pipe_src": "bev_phase",
+   "bev_phase": 19.25,
+   "bev_road": null
+  },
+  "kitti_city_cyclist_candidate": {
+   "date": "2011_09_26",
+   "drive": 1,
+   "start": 40,
+   "n": 30,
+   "oxts_speed_mps": 10.24,
+   "oxts_speed_range": [
+    8.91,
+    11.15
+   ],
+   "oxts_yaw_dps_right": 0.65,
+   "yaw_range": [
+    -0.24,
+    1.43
+   ],
+   "pipe_speed": 11.29,
+   "pipe_src": "bev_phase",
+   "bev_phase": 11.29,
+   "bev_road": null
+  },
+  "kitti_lane_split_candidate": {
+   "date": "2011_09_26",
+   "drive": 5,
+   "start": 100,
+   "n": 30,
+   "oxts_speed_mps": 5.68,
+   "oxts_speed_range": [
+    4.88,
+    5.75
+   ],
+   "oxts_yaw_dps_right": 11.16,
+   "yaw_range": [
+    4.46,
+    14.43
+   ],
+   "pipe_speed": 4.63,
+   "pipe_src": "bev_phase",
+   "bev_phase": 4.63,
+   "bev_road": null
+  }
+ },
+ "how": "thumbnail NCC (64x48) of clip frames vs KITTI raw image_02 (public S3, range reads); exact match ncc 1.000 at the start frame"
+}

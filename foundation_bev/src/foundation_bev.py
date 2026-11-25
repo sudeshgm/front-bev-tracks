@@ -53,6 +53,10 @@ STATIC_PIN_MPS = 1.5  # iter6
 # iter9: static test in the ego-compensated WORLD frame (VO heading + selected travel). The iter6 test only removes
 # ego translation, so with ego yaw a parked car sweeps sideways (lane_split: ~3 m/s at 13 deg/s yaw) and longitudinally,
 # is not pinned and draws a short diagonal trail (lane_split f29 z 12-18 / 25, munich f692 right side).
+# iter15 ego motion: yaw source for the ego pose (bev = BEV-ECC on the road-masked BEV, em = point-LK EgoMotion with
+# the fixed sign, legacy = iter3-14 EgoMotion sign, i.e. mirrored turns); lane-parallelism pitch for the BEV-phase speed
+EGO_YAW = os.environ.get("FBEV_EGO_YAW", "bev")
+EGO_PITCH = os.environ.get("FBEV_EGO_PITCH", "1") == "1"
 WORLD_PIN = os.environ.get("FBEV_WORLD_PIN", "0") == "1"  # iter9: VO-heading world pin; OFF (VO psi does not fit track motion)
 RHT_PIN = os.environ.get("FBEV_RHT_PIN", "1") == "1"  # iter9: right-hand traffic: right-side track moving backward -> dot
 RHT_MAX_RATIO = float(os.environ.get("FBEV_RHT_MAX_RATIO", "1.5"))  # backward speed <= ratio x ego speed
@@ -376,6 +380,8 @@ import bev_gate as BG
 import ego_motion as EM
 import lines_mt as LM
 import bev_ipm as IP  # noqa: E402
+import topo_log as TL  # noqa: E402  iter15 diagnostics
+import lane_pitch as LPI  # noqa: E402  iter15 lane-parallelism pitch (speed scale)
 
 OBJ_LEN = {"car": 4.2, "person": 0.5, "bicycle": 1.7}
 
@@ -482,6 +488,7 @@ def obj_bev(o, gm: "BS.GroundModel", h, mode="fuse"):
 
 
 EGO_ROAD = os.environ.get("FBEV_EGO_ROAD", "1") == "1"  # iter14: road-masked BEV phase ego tier (0 = iter13 selection)
+TOPO_LOG = os.environ.get("FBEV_TOPO_LOG", "")  # iter15: per-frame road-topology JSONL (diagnostics only)
 STAGE_DUMP = os.environ.get("FBEV_STAGE_DUMP", "")  # iter14: per-frame stage-1/2 intermediates for per-stage GT scoring
 _SD = {}  # filled by observe_frame / the pass-1 loop when STAGE_DUMP is set (never used otherwise)
 
@@ -1059,7 +1066,9 @@ def run_clip2(args):
                 road_prev[int(f_["frame"])] = (sides[-1], sides[1])
     Hm_bev = IP.ipm_homography(gm0); bev_hw = IP.bev_shape()
     bev_valid = IP.valid_mask((h, w), Hm_bev, gm0.horizon_v)
-    bpe_rm = EM.BevPhaseEgo(gm0, fps, speed, z_band=(max(7.0, float(cam.get("bev_phase_z0", 7.0))), 40.0), min_resp=0.10)  # iter14 road-masked
+    bpe_rm = EM.BevPhaseEgo(gm0, fps, speed, z_band=(max(7.0, float(cam.get("bev_phase_z0", 7.0))), 40.0), min_resp=0.10,
+                            yaw=(EGO_YAW == "bev"))  # iter14 road-masked (+ iter15 BEV-ECC yaw)
+    keep_store = []  # iter15: packed road-minus-vehicle keep masks for the lane-pitch speed re-pass
     bpe = EM.BevPhaseEgo(gm0, fps, speed, z_band=(max(7.0, float(cam.get("bev_phase_z0", 7.0))), 30.0))  # iter3 visual ego-motion (road-mask LK + BEV rigid RANSAC)
     det_dump = []  # iter3: per-frame WD3D boxes / scores / depth for offline replay
     rng = np.random.default_rng(0)
@@ -1101,6 +1110,8 @@ def run_clip2(args):
             if pp is not None:
                 plane_pitches.append(pp[0])
         vp_rows += ob["vp"]
+        if TOPO_LOG and ob.get("road") is not None:  # iter15: road-topology diagnostics only (no output change)
+            TL.log_frame(TOPO_LOG, args.tag, frame_i, ob["road"], objs, depth, gm0, cx, h, w)
         road_k = ob.pop("road")
         em.step(bgr, road_k, [o["box"] for o in objs])
         if args.lines == "mt" and args.classical_masks:  # CPU replay stand-in for SAM (bev_ipm)
@@ -1132,8 +1143,10 @@ def run_clip2(args):
                     x0_, y0_, x1_, y1_ = [int(round(v)) for v in o["box"][:4]]
                     keep_[max(0, y0_ - 4):max(0, y1_ + 4), max(0, x0_ - 4):max(0, x1_ + 4)] = False
             bpe_rm.step(bgr, hud_mask(bgr) if cam.get("hud") else None, keep=keep_)
+            keep_store.append(np.packbits(keep_) if EGO_PITCH else None)
         else:
             bpe_rm.step(bgr, hud_mask(bgr) if cam.get("hud") else None, keep=np.zeros(bgr.shape[:2], bool))
+            keep_store.append(None)
         for o in objs:  # iter3: depth at the box bottom + billboard test (needs depth, so done in pass 1)
             o["depth_z"], o["vplane"] = None, False
             if depth is not None:
@@ -1219,6 +1232,16 @@ def run_clip2(args):
 
     # iter3: ego speed sources -> fallback order oxts > flow (if consistent) > scene closing rate > prior
     vo = em.finalize()
+    # iter15: yaw. EgoMotion's point-LK locks onto ego-fixed texture at night / on low-texture roads (fc1: ~0 m/s
+    # hypothesis), so its rotation is noise; the road-masked BEV-ECC rotation tracks OXTS / VO (see ego_motion.bev_ecc_yaw).
+    vo["yaw_source"] = EGO_YAW
+    if EGO_YAW == "bev":
+        yw = bpe_rm.finalize_yaw(frame_i)
+        vo["yaw_rate"], vo["psi"], vo["yaw_valid_frac"] = yw["yaw_rate"], yw["psi"], yw["valid_frac"]
+    elif EGO_YAW == "legacy":
+        vo["yaw_rate"], vo["psi"] = -vo["yaw_rate"], -vo["psi"]
+    dsv = vo["speed_mps"] / fps
+    vo["x"], vo["z"] = np.cumsum(dsv * np.sin(vo["psi"])), np.cumsum(dsv * np.cos(vo["psi"]))
     tr_ego = {}
     for t in tracks:
         hits = [r for r in t["rows"] if not r["coast"]]
@@ -1229,7 +1252,43 @@ def run_clip2(args):
     scene = BG.scene_ego_profile(tr_ego, frame_i, fps, speed)
     bp = bpe.finalize(frame_i)
     bp["road_masked"] = bpe_rm.finalize(frame_i)
+    # iter15: ground-pitch error from lane parallelism (speed-independent single-frame lane fits). With >= 5 lane pairs,
+    # the two BEV-phase speed estimators are re-run at the corrected pitch (video re-decoded, stored keep masks); the
+    # ground model for everything else is unchanged. GT: fc1_split +13 % -> -1 % (VO), KITTI cyclist +10 -> +2.5 %,
+    # late -9 -> +1 %, exit -3.5 -> +5 %, final -1 -> +7 % (OXTS); clips without lane pairs are untouched.
+    ego_pitch = {"applied": False}
+    if EGO_PITCH:
+        rat = []
+        for ob_ in obs_all:
+            rat += LPI.frame_ratios(LPI.frame_fits(np.asarray(ob_["lane_px"], float).reshape(-1, 2), gm0, args.min_lane_pts, args.max_line_z))
+        th_, r_, n_ = LPI.theta_from_ratios(rat, cam_h)
+        ego_pitch.update(n_pairs=n_, ratio=None if not np.isfinite(r_) else round(r_, 4),
+                         theta_deg=None if th_ is None else round(math.degrees(th_), 3))
+        if th_ is not None and abs(th_) >= math.radians(0.05):
+            gm_t = BS.GroundModel(fx, fy, cx, cy, cam_h, p0 + th_)
+            zb0 = max(7.0, float(cam.get("bev_phase_z0", 7.0)))
+            bpe_t = EM.BevPhaseEgo(gm_t, fps, speed, z_band=(zb0, 30.0))
+            bpe_rm_t = EM.BevPhaseEgo(gm_t, fps, speed, z_band=(zb0, 40.0), min_resp=0.10)
+            cap_t = cv2.VideoCapture(str(args.video))
+            for k_ in range(frame_i):
+                ok_, im_ = cap_t.read()
+                if not ok_:
+                    break
+                if im_.shape[1] != w or im_.shape[0] != h:
+                    im_ = cv2.resize(im_, (w, h))
+                hm_ = hud_mask(im_) if cam.get("hud") else None
+                bpe_t.step(im_, hm_)
+                kp_ = keep_store[k_] if k_ < len(keep_store) else None
+                kp_ = np.unpackbits(kp_)[: h * w].reshape(h, w).astype(bool) if kp_ is not None else np.zeros((h, w), bool)
+                bpe_rm_t.step(im_, hm_, keep=kp_)
+            cap_t.release()
+            bp = bpe_t.finalize(frame_i)
+            bp["road_masked"] = bpe_rm_t.finalize(frame_i)
+            ego_pitch["applied"] = True
+        print("EGO_PITCH", tag, json.dumps(ego_pitch), flush=True)
     ego_sel = select_ego_speed(cam, vo, scene, speed, frame_i, fps, bev=bp)
+    ego_sel["ego_pitch"] = ego_pitch
+    ego_sel["yaw_source"] = EGO_YAW
     print("EGO_SPEED", tag, json.dumps({k: v for k, v in ego_sel.items() if k not in ("s", "speed")}), flush=True)
     s_ego = ego_sel["s"]
     ego_pose = dict(vo, s=s_ego, speed_mps=ego_sel["speed"])

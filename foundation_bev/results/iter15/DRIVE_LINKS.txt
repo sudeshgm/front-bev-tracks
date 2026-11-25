@@ -1,0 +1,40 @@
+# iter15 public BEV videos — private Drive folder KITTI_BEV_Test_Videos
+# folder id: 1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1
+# Uploaded 2026-11-25 ~06:16 CET. New filenames only (no overwrites).
+# Permissions checked: owner-only on the folder and all 9 files; no "anyone" link.
+
+kitti_highway_sample_foundation_bev_iter15.mp4
+  id: 12FTnWU1VhBFsYXSEuDkg5p5k5iNWfdIZ
+  https://drive.google.com/file/d/12FTnWU1VhBFsYXSEuDkg5p5k5iNWfdIZ/view?usp=drivesdk
+
+kitti_highway_exit_approach_foundation_bev_iter15.mp4
+  id: 1EBYjSCbk6aZPEDd7Owz3-uDxvFVsv-0f
+  https://drive.google.com/file/d/1EBYjSCbk6aZPEDd7Owz3-uDxvFVsv-0f/view?usp=drivesdk
+
+kitti_highway_late_foundation_bev_iter15.mp4
+  id: 1gwZJ--2aJP5XqDbpNlAp_-F4qKKlhLyT
+  https://drive.google.com/file/d/1gwZJ--2aJP5XqDbpNlAp_-F4qKKlhLyT/view?usp=drivesdk
+
+kitti_highway_final_foundation_bev_iter15.mp4
+  id: 1mjKYxJPJLBs-NVcG2JP1xKNOC0jmsvub
+  https://drive.google.com/file/d/1mjKYxJPJLBs-NVcG2JP1xKNOC0jmsvub/view?usp=drivesdk
+
+kitti_city_cyclist_candidate_foundation_bev_iter15.mp4
+  id: 19hG5uVmFLYOcAJK2h0X0XHnxBlxbrYKc
+  https://drive.google.com/file/d/19hG5uVmFLYOcAJK2h0X0XHnxBlxbrYKc/view?usp=drivesdk
+
+kitti_lane_split_candidate_foundation_bev_iter15.mp4
+  id: 19WA3LIYqGswMTGpqVJFSVYa2FjNr5U8p
+  https://drive.google.com/file/d/19WA3LIYqGswMTGpqVJFSVYa2FjNr5U8p/view?usp=drivesdk
+
+munich_foundation_bev_iter15.mp4
+  id: 1X637avOwkZdXgPqJk57Nv8JdwynUalkH
+  https://drive.google.com/file/d/1X637avOwkZdXgPqJk57Nv8JdwynUalkH/view?usp=drivesdk
+
+a2d2a_foundation_bev_iter15.mp4
+  id: 18q8-5GdvhWrJTPr2W9RxtxkjcaOVLZkO
+  https://drive.google.com/file/d/18q8-5GdvhWrJTPr2W9RxtxkjcaOVLZkO/view?usp=drivesdk
+
+a2d2b_foundation_bev_iter15.mp4
+  id: 14an1PLgx8RsICH-5WGcAbfkpAti7VveZ
+  https://drive.google.com/file/d/14an1PLgx8RsICH-5WGcAbfkpAti7VveZ/view?usp=drivesdk

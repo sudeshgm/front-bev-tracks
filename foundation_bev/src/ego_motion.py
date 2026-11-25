@@ -3,7 +3,9 @@
 Features: Shi-Tomasi corners inside the road mask (or a below-horizon trapezoid if no mask), with
 object boxes removed. Each tracked pair is lifted to the BEV through the flat-ground model, and a
 rigid 2D transform (yaw + translation) is fitted with RANSAC: points p_prev map to p_cur = R p_prev + t.
-The ego moved by the inverse: forward ds = -t_z, yaw dpsi = -angle(R).
+The ego moved by the inverse: forward ds = -t_z, yaw dpsi = +angle(R) (iter15: + = RIGHT turn, the convention of
+the path integration x += ds*sin(psi), ego_to_world / world_to_ego and lines_mt._to_frame; iter3-14 used -angle(R),
+i.e. + = left, so every consumer mirrored the turn: KITTI lane_split, a 11 deg/s right turn in OXTS, drew a left turn).
 Output is smoothed (median-of-5, then a centred window) and falls back to the prior speed
 when there are too few inliers.
 """
@@ -61,6 +63,14 @@ def rigid2d_ransac(a, b, thr=0.25, iters=200, rng=None):
     return th, t, best[2]
 
 
+def med_then_mean(x, k=2):
+    """median-of-(2k+1) then centred mean-of-(2k+1), edge padded (the EgoMotion.finalize smoother)."""
+    p = np.pad(x, k, mode="edge")
+    med = np.array([np.median(p[i:i + 2 * k + 1]) for i in range(len(x))])
+    p = np.pad(med, k, mode="edge")
+    return np.array([p[i:i + 2 * k + 1].mean() for i in range(len(x))])
+
+
 class EgoMotion:
     def __init__(self, gm, h, w, fps, prior_speed, max_speed=45.0, zmax=30.0):
         self.gm, self.h, self.w, self.fps = gm, h, w, fps
@@ -112,7 +122,7 @@ class EgoMotion:
                 if r is None:
                     continue
                 th, t, inl = r
-                ds, dpsi = -t[1], -th
+                ds, dpsi = -t[1], th  # iter15 sign fix: a right turn rotates static ground points by +angle in (x, z)
                 if 0 <= ds <= self.max_speed / self.fps * 1.2 and (res is None or inl.sum() > res[2]):
                     res = (float(ds), float(dpsi), int(inl.sum()))
         self.raw.append(res)
@@ -132,12 +142,7 @@ class EgoMotion:
         ds2 = np.where(valid, ds, fill_ds); dp2 = np.where(valid, dp, 0.0)
         ds2[0] = dp2[0] = 0.0
         k = max(1, win // 2)
-        def med_then_mean(x):
-            p = np.pad(x, k, mode="edge")
-            med = np.array([np.median(p[i:i + 2 * k + 1]) for i in range(len(x))])
-            p = np.pad(med, k, mode="edge")
-            return np.array([p[i:i + 2 * k + 1].mean() for i in range(len(x))])
-        ds_s, dp_s = med_then_mean(ds2), med_then_mean(dp2)
+        ds_s, dp_s = med_then_mean(ds2, k), med_then_mean(dp2, k)
         ds_s[0] = dp_s[0] = 0.0
         psi = np.cumsum(dp_s)
         x = np.cumsum(ds_s * np.sin(psi)); z = np.cumsum(ds_s * np.cos(psi))
@@ -189,6 +194,21 @@ def ego_to_world(ego, frame, x, z):
 #  band, masked by burned-in HUD/overlay pixels. Translation is in BEV pixels -> metres via the IPM
 #  resolution, so no depth unit enters.
 
+def bev_ecc_yaw(prev, cur, sx, sy, iters=60):
+    """iter15: ego yaw between two road-masked BEV ROIs: Euclidean ECC (rotation + translation) initialised with the
+    phase-correlation shift. BEV rows run against z, so the image angle phi is -angle in (x, z); a right turn rotates
+    static ground by +angle in (x, z) -> dpsi (+ = right) = -phi. Returns rad or None (ECC failure / |dpsi| > 0.2).
+    KITTI OXTS: lane_split mean 11.7 vs 11.1 deg/s right, city_cyclist 0.3 vs 0.6; fc1 VO yaw corr 0.47 / 0.83."""
+    W = np.array([[1, 0, sx], [0, 1, sy]], np.float32)
+    try:
+        _, W = cv2.findTransformECC(prev, cur, W, cv2.MOTION_EUCLIDEAN,
+                                    (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, iters, 1e-5), None, 5)
+    except cv2.error:
+        return None
+    d = -float(np.arctan2(W[1, 0], W[0, 0]))
+    return d if abs(d) < 0.2 else None
+
+
 def is_repeat(prev_gray, cur_gray, thr=0.5):
     return prev_gray is not None and float(np.abs(cur_gray.astype(np.float32) - prev_gray.astype(np.float32)).mean()) < thr
 
@@ -196,9 +216,10 @@ def is_repeat(prev_gray, cur_gray, thr=0.5):
 class BevPhaseEgo:
     """Per-frame forward travel ds (m) from phase correlation of IPM road images. Needs bev_ipm."""
 
-    def __init__(self, gm, capture_hz, prior_speed, z_band=(7.0, 30.0), x_half=6.0, min_resp=0.15):
+    def __init__(self, gm, capture_hz, prior_speed, z_band=(7.0, 30.0), x_half=6.0, min_resp=0.15, yaw=False):
         import bev_ipm as IP
         self.IP, self.gm = IP, gm
+        self.yaw, self.yaw_raw = yaw, []  # iter15: per-transition BEV-ECC yaw (rad, + = right) or None / "repeat"
         self.Hm = IP.ipm_homography(gm)
         self.hz, self.prior = capture_hz, prior_speed
         self.z_band, self.x_half, self.min_resp = z_band, x_half, min_resp
@@ -227,19 +248,41 @@ class BevPhaseEgo:
         self.repeat.append(rep); self.prev_gray = gray
         if rep:
             self.raw.append("repeat")
+            self.yaw_raw.append("repeat")
             return None
         self.keep_frac = 1.0
         r = self._roi(bgr, hud_mask, keep)
-        out = None
+        out, yw = None, None
         if self.prev is not None and self.keep_frac > 0.05:
             win = cv2.createHanningWindow(r.shape[::-1], cv2.CV_32F)
             (sx, sy), resp = cv2.phaseCorrelate(self.prev, r, win)
             ds = sy * self.IP.RES
             if resp >= self.min_resp and 0.0 <= ds <= 45.0 / self.hz * 1.3:
                 out = (float(ds), float(resp))
+            if self.yaw:
+                yw = bev_ecc_yaw(self.prev, r, sx, sy)
         self.raw.append(out)
+        self.yaw_raw.append(yw)
         self.prev = r
         return out
+
+    def finalize_yaw(self, n_frames, win=5):
+        """iter15: per-frame yaw rate (rad/s, + = right) and heading psi from the BEV-ECC rotations. A transition across
+        repeated file frames is spread evenly over them; failed pairs count as 0; then the EgoMotion smoother."""
+        dp = np.zeros(n_frames); pend = 0; nval = ntr = 0
+        for i, y in enumerate(self.yaw_raw[:n_frames]):
+            if y == "repeat":
+                pend += 1
+                continue
+            if i > 0:
+                ntr += 1
+            if isinstance(y, float):
+                nval += 1
+                lo = i - pend
+                dp[lo:i + 1] = y / (pend + 1)
+            pend = 0
+        dp_s = med_then_mean(dp, max(1, win // 2)); dp_s[0] = 0.0
+        return {"yaw_rate": dp_s * self.hz, "psi": np.cumsum(dp_s), "valid_frac": nval / max(ntr, 1)}
 
     def finalize(self, n_frames):
         """Speed per distinct-frame transition, spread over repeated frames; valid fraction; median."""
