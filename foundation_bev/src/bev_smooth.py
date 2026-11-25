@@ -584,6 +584,38 @@ def thin(mask):
     return img[1:-1, 1:-1]
 
 
+
+NIGHT_S, NIGHT_TOPV = float(os.environ.get("FBEV_NIGHT_S", 80)), float(os.environ.get("FBEV_NIGHT_TOPV", 25))  # deep night
+NIGHT_S2, NIGHT_TOPV2 = float(os.environ.get("FBEV_NIGHT_S2", 105)), float(os.environ.get("FBEV_NIGHT_TOPV2", 90))  # strong cast
+_GATE_LOG = os.environ.get("FBEV_GATE_LOG", "")
+_GATE_TAG = ""  # clip tag for the gate log (set by foundation_bev.main)
+
+
+def night_cast(bgr, road, horizon_v, who="", hsv=None):
+    """iter14: the sodium-night gate of the thin-bright adaptive threshold and the road vertical-plane gate.
+    True only if the road (below the horizon, > 500 px) has a sodium hue (median 10-40) and EITHER deep night
+    (road median S > NIGHT_S=80 and the top 40 % of the frame median V < NIGHT_TOPV=25) OR a strong sodium cast
+    (S > NIGHT_S2=105 with top V < NIGHT_TOPV2=90: lit gantries / signs brighten the frame top). Set from the real
+    SAM-road statistics: fc1_split 120/120 gate calls on; 9 public clips 0 on (closest: KITTI late S 94 / top V 30).
+    The iter14 draft gate (S > 70, hue 10-40, no darkness test) also fired on warm daylight asphalt (KITTI highway,
+    A2D2). FBEV_GATE_LOG=<path> appends the per-call statistics (diagnostics only, outputs unchanged)."""
+    if road is None:
+        return False
+    rr = road > 0
+    rr[: int(horizon_v + 6)] = False
+    if rr.sum() <= 500:
+        return False
+    if hsv is None:
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    hs = hsv[rr]
+    S, H = float(np.median(hs[:, 1])), float(np.median(hs[:, 0]))
+    topv = float(np.median(hsv[: max(1, int(0.4 * hsv.shape[0])), :, 2]))
+    ok = 10 <= H <= 40 and ((S > NIGHT_S and topv < NIGHT_TOPV) or (S > NIGHT_S2 and topv < NIGHT_TOPV2))
+    if _GATE_LOG:
+        with open(_GATE_LOG, "a") as f:
+            f.write(f'{{"tag": "{_GATE_TAG}", "who": "{who}", "S": {S:.1f}, "H": {H:.1f}, "topV": {topv:.1f}, "old": {int(S > 70 and 10 <= H <= 40)}, "on": {int(ok)}}}\n')
+    return ok
+
 def thin_bright_mask(bgr, road, y0, y1, horizon_v):
     """White/yellow thin stripes inside the road: top-hat on V plus colour gate, below horizon."""
     h, w = bgr.shape[:2]
@@ -591,8 +623,20 @@ def thin_bright_mask(bgr, road, y0, y1, horizon_v):
     V = hsv[:, :, 2]
     k = max(9, (w // 40) | 1)
     toph = cv2.morphologyEx(V, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (k, 1)))
-    white = (toph > 25) & (hsv[:, :, 1] < 90) & (V > 120)
-    yellow = (hsv[:, :, 0] >= 12) & (hsv[:, :, 0] <= 42) & (hsv[:, :, 1] > 70) & (V > 90) & (toph > 15)
+    tw, ty = 25, 15
+    _ad = os.environ.get("FBEV_TB_ADAPT", "auto")
+    if _ad == "auto":  # iter14: adapt only at night under a sodium-lamp cast (night_cast)
+        _ad = "1" if night_cast(bgr, road, horizon_v, "tb", hsv=hsv) else "0"
+    if _ad == "1":
+        # iter14 (experimental, default off): noise-adaptive top-hat threshold. Under sodium night light the road
+        # texture itself passes the yellow gate (fc1_split lane_px precision 0.32); 1.2 x p90 of road top-hat.
+        rr = road > 0
+        rr[: int(horizon_v + 6)] = False
+        if rr.sum() > 500:
+            nz = float(np.percentile(toph[rr], 90))
+            tw, ty = max(25, 1.2 * nz), max(15, 1.2 * nz)
+    white = (toph > tw) & (hsv[:, :, 1] < 90) & (V > 120)
+    yellow = (hsv[:, :, 0] >= 12) & (hsv[:, :, 0] <= 42) & (hsv[:, :, 1] > 70) & (V > 90) & (toph > ty)
     m = (white | yellow) & (road > 0)
     top = int(max(y0, horizon_v + 6))
     m[:top] = False

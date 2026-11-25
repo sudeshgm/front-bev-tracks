@@ -20,6 +20,9 @@ ap.add_argument("--device", default="cuda:0")
 ap.add_argument("--budget-s", type=float, default=3.0 * 3600, help="stage-1 GPU budget; auto-stride if projected over")
 ap.add_argument("--max-frames", type=int, default=0, help="smoke: cap frames per clip")
 ap.add_argument("--fp16", type=int, default=1)
+ap.add_argument("--per-frame-dir", default="", help="iter14: write each frame's dets to DIR/<tag>_<frame>.npz at once and "
+                "skip frames already there (resumable); the clip npz is assembled from them")
+ap.add_argument("--frames", default="", help="iter14: comma list / a-b ranges of frame indices to run (others skipped)")
 a = ap.parse_args()
 
 # iter2: WildDet3D's model.py imports `sam3` (code only; WD3D's own checkpoint carries all weights).
@@ -47,6 +50,23 @@ model.eval()
 print(f"model built in {time.time()-t_build:.1f}s", flush=True)
 dev = torch.device(a.device)
 use_cuda = dev.type == "cuda"
+if not use_cuda:
+    # iter14 (CPU stage 1): WildDet3D's forward runs the SAM3 backbone and the LingBot geometry backend on two CUDA
+    # streams purely for overlap; on CPU they run one after the other (same ops, same weights, same result).
+    import contextlib
+
+    class _SeqStream:
+        def __init__(self, *a, **k):
+            pass
+
+        def synchronize(self):
+            pass
+
+    torch.cuda.Stream = _SeqStream
+    torch.cuda.stream = lambda s=None: contextlib.nullcontext()
+    # SAM3's geometry encoder pins a host tensor before a non_blocking copy (a transfer optimisation); with no
+    # accelerator pinning raises, and the copy is a plain CPU tensor either way.
+    torch.Tensor.pin_memory = lambda self, *a, **k: self
 
 
 def count(tag):
@@ -86,6 +106,9 @@ def infer(rgb, K, tag=None, want_k=False):
                 s2d=s2d.reshape(-1), s3d=s3d.reshape(-1), cids=cids.reshape(-1).astype(np.int32))
 
 
+FSEL = set()
+for _p in filter(None, a.frames.split(",")):
+    _a, _, _b = _p.partition("-"); FSEL |= set(range(int(_a), int(_b or _a) + 1))
 totals = {t: count(t) for t in a.tags}
 N_all = sum(totals.values())
 stride, t_start, done, summary = 1, time.time(), 0, {}
@@ -101,16 +124,24 @@ for ci, tag in enumerate(a.tags):
         ok, bgr = cap.read()
         if not ok:
             break
-        if i % stride == 0:
+        if (i % stride == 0) and (not FSEL or i in FSEL):
             t = time.time()
-            d = infer(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), K, tag, want_k=len(fidx) < 5)
+            pf = os.path.join(a.per_frame_dir, f"{tag}_{i:04d}.npz") if a.per_frame_dir else ""
+            if pf and os.path.exists(pf):
+                with np.load(pf) as Z:
+                    d = {k: Z[k] for k in ("boxes", "boxes3d", "scores", "s2d", "s3d", "cids")}
+            else:
+                d = infer(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), K, tag, want_k=len(fidx) < 5)
+                if pf:
+                    os.makedirs(a.per_frame_dir, exist_ok=True)
+                    np.savez_compressed(pf + ".tmp.npz", **d); os.replace(pf + ".tmp.npz", pf)
             if use_cuda:
                 torch.cuda.synchronize(dev)
             times.append(time.time() - t); done += 1
             for k in per:
                 per[k].append(d[k])
             fidx.append(i); offs.append(offs[-1] + len(d["scores"]))
-            if done == 15 and ci == 0 and not a.max_frames:  # projected budget check after warm-up
+            if done == 15 and ci == 0 and not a.max_frames and not FSEL:  # projected budget check after warm-up
                 spf = float(np.median(times[3:]))
                 proj = spf * N_all
                 if proj > a.budget_s:
@@ -130,6 +161,10 @@ for ci, tag in enumerate(a.tags):
                         wall_s=round(float(np.sum(times)), 1))
     print(tag, summary[tag], flush=True)
 summary["_peak_vram_GiB"] = round(torch.cuda.max_memory_allocated(dev) / 2**30, 2) if use_cuda else None
+if not use_cuda:
+    import resource
+    summary["_peak_rss_GiB"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20, 2)
+summary["_device"] = a.device; summary["_fp16"] = bool(a.fp16 and use_cuda); summary["_torch_threads"] = torch.get_num_threads()
 summary["_prompts"] = a.prompts
 summary["_k_pred_first5"] = KPRED
 # iter2: count object detections per clip; a run with zero object boxes is a failure, not a fallback.

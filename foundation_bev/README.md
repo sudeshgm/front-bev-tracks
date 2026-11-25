@@ -1,6 +1,6 @@
 # Foundation-model BEV pipeline
 
-This directory is the foundation-model bird's-eye-view tracker. It is a separate line of work from the YOLO / TwinLiteNet pipeline on `lane-solver-fast` and `main`. The latest GPU-validated code is **iter13** (open issues are in `results/iter13/KNOWN_ISSUES.md`). Earlier iteration specs are under `history/`, and small result tables are under `results/`.
+This directory is the foundation-model bird's-eye-view tracker. It is a separate line of work from the YOLO / TwinLiteNet pipeline on `lane-solver-fast` and `main`. The current code is **iter14** (`SPEC.md`, open issues in `results/iter14/KNOWN_ISSUES.md`). **iter14 has no GPU run:** on all 9 public clips its output is identical to iter13's (verified with the real stage-2 models on CPU, `results/iter14/public_cpu_check.md`). Its changes only act on private night / 4 fps footage. The latest GPU-validated run is therefore **iter13** (`results/iter13/`). Earlier iteration specs are under `history/`, and small result tables are under `results/`.
 
 Videos are not in this repo. They live in the private Google Drive folder [KITTI_BEV_Test_Videos](https://drive.google.com/drive/folders/1WlUGEUkBr-VqJg3jSeieE6nXRYUsdCq1). Per-iteration file IDs are in `results/iterN/DRIVE_LINKS.txt`.
 
@@ -20,9 +20,9 @@ The run is two stages, then a BEV render. TwinLiteNet and YOLO are never used in
 
 The BEV overlay shows only class-coloured trajectories, lane-line curves, road-edge curves, the ego path, and gore polygons. It does not show depth maps or edge maps.
 
-## How to run iter13
+## How to run iter14
 
-Entry point: `src/run_iter13.py`. The dataset directory (`FBEV_DS`) must contain the clip MP4s, `cams.json` (intrinsics used at capture time), `motion_assumptions.json`, and this package (`src/`, `cams_iter13.json`, and optionally `yolo_baseline/`). The nine clips are `kitti_highway_sample`, `kitti_highway_exit_approach`, `kitti_highway_late`, `kitti_highway_final`, `kitti_city_cyclist_candidate`, `kitti_lane_split_candidate`, `munich`, `a2d2a`, and `a2d2b`.
+Entry point: `src/run_iter14.py`. The dataset directory (`FBEV_DS`) must contain the clip MP4s, `cams.json` (intrinsics used at capture time), `motion_assumptions.json`, and this package (`src/`, `cams_iter13.json`, and optionally `yolo_baseline/`). The nine clips are `kitti_highway_sample`, `kitti_highway_exit_approach`, `kitti_highway_late`, `kitti_highway_final`, `kitti_city_cyclist_candidate`, `kitti_lane_split_candidate`, `munich`, `a2d2a`, and `a2d2b`.
 
 Typical GPU run (one T4, about 75 minutes for stage 1 + stage 2 + the YOLO baseline):
 
@@ -33,10 +33,10 @@ export FBEV_TMP=/path/to/scratch
 # Optional YOLOPv2 baseline (measurement only):
 # export FBEV_YOLOPV2=/path/to/yolopv2.torchscript
 # export FBEV_YOLO_REPO=/path/to/sam-bev-22nov
-python src/run_iter13.py
+python src/run_iter14.py
 ```
 
-Outputs land in `FBEV_OUT`: `results/<clip>_foundation_bev_iter13.mp4`, `stills/`, `tracks/`, `polylines/` (with `step`, `edges_raw` and `edges_raw_held` for exact replays), `dets_dump/`, `metrics.md`, `ego_speed_table.md`, and `metrics_yolo_vs_run.md`.
+Outputs land in `FBEV_OUT`: `results/<clip>_foundation_bev_iter14.mp4`, `stills/`, `tracks/`, `polylines/` (with `step`, `edges_raw` and `edges_raw_held` for exact replays), `dets_dump/`, `metrics.md`, `ego_speed_table.md`, `metrics_yolo_vs_run.md`, and `gate.jsonl` (night-gate statistics; `tools/gate_summary.py`).
 
 ### Environment variables
 
@@ -84,6 +84,11 @@ Outputs land in `FBEV_OUT`: `results/<clip>_foundation_bev_iter13.mp4`, `stills/
 | `FBEV_EDGE_ANCHOR_BACKFILL` | `1` | iter13: frames before the first LaneAnchor fit get its offset (≤ 1 s) |
 | `FBEV_LOWFPS_TIME` | `1` | iter13: below 10 fps every frame-count window keeps its 10 Hz time span (bit-identical on the 9 public clips) |
 | `FBEV_DRAW_OCCLUDE` | `1` | iter13, display only: synthetic edges are not painted over car boxes in the camera view |
+| `FBEV_EGO_ROAD` | `1` | iter14: road-masked BEV-phase ego tier, used only where iter13 falls back to the prior and only within the guard (valid >= 40 %, >= 5 pairs, no repeats, 0.33-3x prior) |
+| `FBEV_TB_ADAPT` / `FBEV_ROAD_VPLANE` | `auto` | iter14: noise-adaptive thin-bright threshold / road vertical-plane gate, only under the sodium-night gate (`FBEV_NIGHT_S=80`, `FBEV_NIGHT_TOPV=25`, `FBEV_NIGHT_S2=105`, `FBEV_NIGHT_TOPV2=90`); `0` off, `1` always |
+| `FBEV_GATE_LOG` | `$FBEV_OUT/gate.jsonl` | iter14 diagnostics: per-call night-gate statistics with the clip tag |
+| `FBEV_EDGE_CAR_BF` | `push` | iter14 knob: `trim` cuts clip-start backfilled edges before a parked car (city wjit 0.054 -> 0.037, z20 presence cost) |
+| `FBEV_GORE_SPATIAL` | `0` | iter14 experiment: one-frame lane-edge divergence wedge, 0.5 s confirmation (false gores on public clips) |
 | `FBEV_TRIM_DEBUG` | unset | Diagnosis only: JSONL file of every edge trim's masks and kept run |
 
 CPU tests (no GPU, no weights):
@@ -215,19 +220,20 @@ city edge wjit 0.037 → 0.054 (`FBEV_EDGE_CAR_CLEAR=0` restores iter12).
 | 12 | Clip-start edge backfill holds the first live offset (city edge wjit 0.076 → 0.037, late 0.041 → 0.034) and must cover z = 10 m with no diagonal copy; edge window 1.0 s (A2D2a f0 right edge). LaneAnchor: a missing or hold-coasted main edge follows the nearest lane (else the opposite edge) at its learned offset for up to 3 s (Munich R z10 777 → 862/900, f165–166 present). Polylines carry the tracker coast flag for exact CPU replays. Gores, accel, tracks and idsw (0) unchanged. **Known issues:** the anchored Munich right edge is drawn over parked cars (f189–251), and on some frames jumps inside them; Munich f562–563 / f570–571 still absent. |
 | 11 | Munich f881–885 false widen gore removed: the kerb ramp widened the lane–edge gap gradually, so a kerb blend change now restarts the widen history (gores only exit f21–26 and Munich f760–765). Short diagonal edge fragments are vetoed before the hold, so the hold coasts (Munich R z10 776 → 777: +f520–526, f550–560, f615; −f561–577, f618). Main road edges backfilled at the clip start, and the window grew 0.3 → 0.6 s (edges 100 % on every KITTI clip; final lanes 93.3 / 90 → 100 / 100). Ego lane-pair width offset RTS-smoothed as a random walk: lane wjit exit 0.017 → 0.007, late 0.019 → 0.006, final 0.012 → 0.006, all at or below YOLOPv2. Accel, tracks and idsw (0) unchanged. Edge wjit rose on city (0.054 → 0.076) and late (0.035 → 0.041). |
 | 13 | Synthetic edges (anchored / backfilled / held) cleared out of parked-car footprints by a whole-line shift, else trimmed (car audit 16 → 0 frames; Munich R z10 862 → 871, a2d2b f0 L edge). LaneAnchor rate limit 1 m/s; fragment veto on tracker coasts; anchor backfill; low-fps time base (fps < 10 keeps 10 Hz time spans; public clips bit-identical); front-view occlusion of synthetic edges. City edge wjit 0.037 → 0.054 (disclosed). |
+| 14 | No GPU run (public output identical to iter13, CPU-verified). For private night / 4 fps footage: road-masked BEV-phase ego tier (guarded), noise-adaptive thin-bright threshold and road vertical-plane gate behind a sodium-night gate (0 firings on the 9 public clips). Night split: false gores 21 → 0, ego lane z10 0.93 / 0.72 → 0.22 / 0.05 m, left edge 3.95 → 1.12 m, ego distance −48 % → +16 %; day merge ego distance +75 % → +3 %. Fork / merge gores still open. |
 
 ## Layout
 
 ```
 foundation_bev/
-  src/run_iter13.py    # GPU entry point
+  src/run_iter14.py    # GPU entry point
   src/                 # WildDet3D infer, BEV, lines_mt, ego motion, metrics
   tests/               # pytest, including a NumPy 1.x shim
-  cams_iter13.json     # per-clip intrinsics and notes used by the runner (same as iter12)
-  SPEC.md              # iter13 change list and GPU-run contract
-  patch.diff           # iter13 vs iter12 src
+  cams_iter13.json     # per-clip intrinsics and notes used by the runner (unchanged since iter12)
+  SPEC.md              # iter14 change list and verification
+  patch.diff           # iter14 vs iter13 src
   tools/               # offline gore, edge, track, smoothing / kerb, dot-rule, lane-pair and gap replays
-  replay/              # iter13 replay of the iter12 GPU run, car-footprint audit, overlays
+  replay/              # iter14 replay of the iter13 GPU run, car-footprint audit, kernel smoke
   yolo_baseline/       # optional YOLOPv2 comparison only
   history/iterN_spec/  # earlier code and markdown
   results/iterN/       # metrics tables and Drive links

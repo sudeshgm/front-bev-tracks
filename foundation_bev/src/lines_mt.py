@@ -21,6 +21,7 @@ Across frames:
   GoreTracker         hit-count + EMA on polygon vertices
 """
 import json
+import math
 import os
 
 import numpy as np
@@ -1007,8 +1008,9 @@ class DivergenceGore:
     with a non-decreasing gap before it is drawn."""
 
     def __init__(self, n_persist=3, grow_m=float(os.environ.get("FBEV_GORE_GROW_M", 1.2)), hist=12,
-                 max_step=float(os.environ.get("FBEV_GORE_MAX_STEP", 0.4))):
+                 max_step=float(os.environ.get("FBEV_GORE_MAX_STEP", 0.4)), fps=10.0):
         self.n_persist, self.grow_m, self.hist, self.max_step = n_persist, grow_m, hist, max_step
+        self.n_spatial = max(2, int(math.ceil(GORE_SPATIAL_S * float(fps or 10.0) - 1e-9)))  # iter14: time, not frames
         self.run = {}      # key -> consecutive frames
         self.gaps = {-1: [], 1: []}
         self.kalpha = {-1: 0.0, 1: 0.0}
@@ -1059,6 +1061,11 @@ class DivergenceGore:
                     poly = np.concatenate([np.stack([xa, zz], 1), np.stack([xb, zz], 1)[::-1]])
                     cands[("widen", sd)] = {"poly": poly, "n_stripes": 0, "area": float(_trapz(np.abs(xb - xa), zz)),
                                             "centre": poly.mean(0), "src": "widen"}
+        if GORE_SPATIAL:
+            for sd in (-1, 1):
+                g = spatial_divergence(lanes, mains.get(sd), sd)
+                if g is not None:
+                    cands[("spatial", sd)] = g
         out = []
         for k in list(self.run):
             if k not in cands:
@@ -1066,9 +1073,50 @@ class DivergenceGore:
         for k, g in cands.items():
             self.run[k] = self.run.get(k, 0) + 1
             # spatial (single-frame shape) wedges flicker on city clutter -> 2x persistence; temporal widening 1x
-            if self.run[k] >= (self.n_persist if k[0] == "widen" else 2 * self.n_persist):
+            need = self.n_spatial if k[0] == "spatial" else (self.n_persist if k[0] == "widen" else 2 * self.n_persist)
+            if self.run[k] >= need:
                 out.append(g)
         return out
+
+
+GORE_SPATIAL = os.environ.get("FBEV_GORE_SPATIAL", "0") == "1"  # iter14 experiment (default off)
+GORE_SPATIAL_S = float(os.environ.get("FBEV_GORE_SPATIAL_S", "0.5"))     # confirmation time (s)
+GORE_SPATIAL_OPEN = float(os.environ.get("FBEV_GORE_SPATIAL_OPEN", "1.5"))  # m the gap must open / close over the span
+GORE_SPATIAL_RMS = float(os.environ.get("FBEV_GORE_SPATIAL_RMS", "0.3"))    # straight-wedge residual (m)
+
+
+def spatial_divergence(lanes, e, sd, z0=8.0, z1=40.0, min_span=12.0):
+    """iter14 (fc1_split fork / fc1_merge gores, temporal widen rule near-field only): ONE-frame lane-edge divergence.
+    The gap between the side's main edge and the lane line nearest the ego, over z0..z1 where both exist (>= min_span
+    m), must be a straight wedge: linear in z (residual rms <= GORE_SPATIAL_RMS), opening (split / exit) or closing
+    (merge) by >= GORE_SPATIAL_OPEN m over the span, with a near gap 0.3-4.5 m (the edge belongs to the adjacent
+    lane, not a kerb behind parking). Persistence over GORE_SPATIAL_S seconds is applied by DivergenceGore."""
+    if e is None or e.get("xg") is None:
+        return None
+    ls = [r for r in lanes if r["side"] == sd and r.get("xg") is not None and np.isfinite(r["xg"]).sum() >= 8]
+    if not ls:
+        return None
+    nl = min(ls, key=lambda r: abs(np.nanmedian(r["xg"])))
+    ex, lx = np.asarray(e["xg"], float), np.asarray(nl["xg"], float)
+    both = np.isfinite(ex) & np.isfinite(lx) & (ZS >= z0) & (ZS <= z1)
+    if both.sum() < 8 or ZS[both].max() - ZS[both].min() < min_span:
+        return None
+    zz = ZS[both]; gap = (ex[both] - lx[both]) * sd
+    b, a0 = np.polyfit(zz, gap, 1)
+    fit = a0 + b * zz
+    if float(np.sqrt(np.mean((gap - fit) ** 2))) > GORE_SPATIAL_RMS:
+        return None
+    gn, gf = float(fit[0]), float(fit[-1])
+    if abs(gf - gn) < GORE_SPATIAL_OPEN or not (0.3 <= min(gn, gf) <= 4.5):
+        return None
+    base = min(gn, gf)
+    sel = gap - base >= 0.3
+    if sel.sum() < 4:
+        return None
+    xa = lx[both][sel] + sd * base; xb = ex[both][sel]; z = zz[sel]
+    poly = np.concatenate([np.stack([xa, z], 1), np.stack([xb, z], 1)[::-1]])
+    return {"poly": poly, "n_stripes": 0, "area": float(_trapz(np.abs(xb - xa), z)), "centre": poly.mean(0),
+            "src": "spatial_" + ("split" if gf > gn else "merge")}
 
 
 def fork_gores(lanes, edges, min_gap=1.0, max_gap=4.0, lane_edge=True):
@@ -1134,7 +1182,7 @@ class StageLines:
         self.edges = {r: MultiLineTracker("edge", n_birth=fr10(3, f, 2), n_death=fr10(4, f, 2), gate_max=2.0, alpha=0.2)
                       for r in ("main_L", "main_R", "split_in", "split_out")}
         self.gore = GoreTracker(n_birth=fr10(3, f, 2), n_death=fr10(4, f, 2))  # iter6: stripe gores need 3 frames
-        self.div = DivergenceGore(n_persist=fr10(3, f, 2), hist=fr10(12, f, 4))
+        self.div = DivergenceGore(n_persist=fr10(3, f, 2), hist=fr10(12, f, 4), fps=f)
         self.lane_min_hits = fr10(4, f, 2)
         self.n_split_frames = 0
         self.hold = EdgeHold(fps=fps)  # iter8: 0.5 s hold
@@ -1838,7 +1886,26 @@ def edge_car_clear(frames, cars, lanes=None):
                 row.append(e); continue
             sd = -1 if role == "main_L" else 1
             o = next((x for x in fr if x.get("role") == ("main_R" if sd < 0 else "main_L") and x.get("xg") is not None), None)
-            xc, st = car_clear(e["xg"], sd, ck, _ref_slope(o["xg"] if o is not None else None, lk))
+            xc, st = None, None
+            if EDGE_CAR_BF == "local" and e.get("backfill"):
+                # iter14: a local push over each car's z range only (the rest of the backfilled line stays on the live edge)
+                if car_inside(e["xg"], sd, ck):
+                    xp = _push_local(e["xg"], sd, ck, None, KERB_CAR_LEN_M)
+                    if xp is not None:
+                        xc, st = xp, "pushed"
+                else:
+                    st = "clear"
+            if EDGE_CAR_BF == "trim" and e.get("backfill"):
+                # iter14 (iter13 city edge wjit 0.037 -> 0.054): a clip-start backfill copies the first live edge; pushing
+                # it out of the parked-car row made f0-1 jump against the live f2+. Cut it short before the car instead.
+                if car_inside(e["xg"], sd, ck):
+                    xt = _trim_before_cars(e["xg"], sd, ck, KERB_CAR_LEN_M)
+                    if xt is not None:
+                        xc, st = xt, "trimmed"
+                else:
+                    st = "clear"
+            if st is None:
+                xc, st = car_clear(e["xg"], sd, ck, _ref_slope(o["xg"] if o is not None else None, lk))
             if st == "drop":
                 continue
             row.append(e if st == "clear" else _zrange(dict(e, xg=xc, car_push=True), xc))
@@ -2061,6 +2128,7 @@ def car_clear(x, side, cars, ref_slope, max_push=None, car_len=KERB_CAR_LEN_M):
     return x, "drop"
 
 
+EDGE_CAR_BF = os.environ.get("FBEV_EDGE_CAR_BF", "push")  # iter14 knob: trim = backfilled edges cut short before the car (city wjit .054 -> .037, z20 presence -2 frames; not default); local = rejected
 EDGE_CAR_TRIM = os.environ.get("FBEV_EDGE_CAR_TRIM", "1") == "1"  # iter13: cut short in front of the car instead of dropping
 EDGE_CAR_TRIM_MIN = float(os.environ.get("FBEV_EDGE_CAR_TRIM_MIN", "4.0"))  # m of line that must remain
 

@@ -204,7 +204,7 @@ class BevPhaseEgo:
         self.z_band, self.x_half, self.min_resp = z_band, x_half, min_resp
         self.prev, self.prev_gray, self.raw, self.repeat = None, None, [], []
 
-    def _roi(self, bgr, mask=None):
+    def _roi(self, bgr, mask=None, keep=None):
         IP = self.IP
         g = cv2.cvtColor(IP.warp(bgr, self.Hm), cv2.COLOR_BGR2GRAY).astype(np.float32)
         u0, v1 = IP.xz_to_bev_px(-self.x_half, self.z_band[0]); u1, v0 = IP.xz_to_bev_px(self.x_half, self.z_band[1])
@@ -212,18 +212,26 @@ class BevPhaseEgo:
         r = g[sl] - cv2.blur(g[sl], (31, 31))
         if mask is not None:
             r[(IP.warp(mask.astype(np.uint8) * 255, self.Hm, interp=cv2.INTER_NEAREST) > 0)[sl]] = 0
+        if keep is not None:
+            # iter14: keep only the SAM road minus vehicle boxes; the mask edge is feathered (sigma 6 px) because a hard
+            # edge is near-static between frames and pulls the phase peak to zero (fc1_merge 4.9 -> 7.2 m/s, GT 7.23)
+            kb = (IP.warp(keep.astype(np.uint8) * 255, self.Hm, interp=cv2.INTER_NEAREST) > 0).astype(np.uint8)
+            kb = cv2.erode(kb, np.ones((5, 5), np.uint8)).astype(np.float32)
+            self.keep_frac = float(kb[sl].mean())
+            r = r * cv2.GaussianBlur(kb, (0, 0), 6.0)[sl]
         return r
 
-    def step(self, bgr, hud_mask=None):
+    def step(self, bgr, hud_mask=None, keep=None):
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         rep = is_repeat(self.prev_gray, gray)
         self.repeat.append(rep); self.prev_gray = gray
         if rep:
             self.raw.append("repeat")
             return None
-        r = self._roi(bgr, hud_mask)
+        self.keep_frac = 1.0
+        r = self._roi(bgr, hud_mask, keep)
         out = None
-        if self.prev is not None:
+        if self.prev is not None and self.keep_frac > 0.05:
             win = cv2.createHanningWindow(r.shape[::-1], cv2.CV_32F)
             (sx, sy), resp = cv2.phaseCorrelate(self.prev, r, win)
             ds = sy * self.IP.RES
