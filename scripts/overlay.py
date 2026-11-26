@@ -954,7 +954,12 @@ def main():
         objects = track_objects(packed, score_min=0.4, max_gap=max(8, int(round(1.0 / frame_dt))))
     else:
         packed = build_frames_rfdetr(samples, poses, cache, camera, rf)
-        objects = track_objects(packed, score_min=min(0.4, args.rfdetr_threshold), max_gap=max(8, int(round(1.0 / frame_dt))))
+        objects = track_objects(
+            packed,
+            score_min=min(0.4, args.rfdetr_threshold),
+            max_gap=max(8, int(round(1.0 / frame_dt))),
+            vru_assoc=True,
+        )
     smooth_world(objects, poses, frame_dt)
     extend_tracks(objects, packed, horizon=2.0)
     if rf is not None:

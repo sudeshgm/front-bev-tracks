@@ -537,6 +537,78 @@ def test_oncoming_car_is_not_held_still():
     assert travelled > 10.0, travelled
 
 
+def test_vru_assoc_joins_person_and_bicycle_across_a_range_jump():
+    """A pedestrian that RF-DETR then reads as a bicycle stays one track.
+
+    The range also jumps by more than the 2.2 m pedestrian Euclidean gate, which
+    is what monocular depth does. Default association (vru_assoc off) starts a
+    new ID; with vru_assoc the family + range-tolerant cost keeps it.
+    """
+
+    def frame(token, t, x, y, label):
+        # label 4 = pedestrian, 2 = bicycle
+        return {
+            "token": token,
+            "t": t,
+            "pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+            "boxes": [[x, y, 0.0, 0.6, 0.6, 1.7, 0.0, 0.0, 0.0]],
+            "scores": [0.9],
+            "labels": [label],
+        }
+
+    frames = [
+        frame("0", 0.0, 20.0, 0.0, 4),
+        frame("1", 0.1, 23.5, 0.2, 2),
+    ]
+    off = track_objects(frames, score_min=0.2)
+    on = track_objects(frames, score_min=0.2, vru_assoc=True)
+    assert len(off) == 2, [(t["id"], t["name"], t["hits"]) for t in off]
+    assert {t["name"] for t in off} == {"pedestrian", "bicycle"}
+    assert all(t["hits"] == 1 for t in off)
+    assert len(on) == 1, [(t["id"], t["name"], t["hits"]) for t in on]
+    assert on[0]["hits"] == 2
+    assert on[0]["name"] == "pedestrian"
+    assert [s["token"] for s in on[0]["samples"] if not s.get("predicted")] == ["0", "1"]
+
+
+def test_vru_assoc_does_not_change_vehicle_tracks():
+    """The vehicle association path is identical with vru_assoc on or off."""
+
+    def frame(token, t, pose, centres):
+        boxes, scores, labels = [], [], []
+        for x, y in centres:
+            boxes.append([x, y, 0.0, 1.8, 4.2, 1.5, 0.0, 0.0, 0.0])
+            scores.append(0.9)
+            labels.append(0)
+        return {"token": token, "t": t, "pose": pose, "boxes": boxes, "scores": scores, "labels": labels}
+
+    # Mix: an oncoming range jump that should stay one car, plus a sideways
+    # car that must remain a different ID. Same fixtures as the vehicle tests.
+    frames = [
+        frame("a", 0.0, {"x": 0, "y": 0, "yaw": 0}, [(30, 0), (8.0, 3.6)]),
+        frame("b", 0.1, {"x": 1, "y": 0, "yaw": 0}, [(21, 0), (8.0, 9.6), (30, 3.5)]),
+    ]
+    off = track_objects(frames, score_min=0.2)
+    on = track_objects(frames, score_min=0.2, vru_assoc=True)
+
+    def dump(tracks):
+        rows = []
+        for track in sorted(tracks, key=lambda t: (t["name"], t["samples"][0]["token"], t["id"])):
+            samples = [
+                (s["token"], s["world"], s.get("predicted", False))
+                for s in track["samples"]
+            ]
+            rows.append((track["name"], track["label"], track["hits"], samples))
+        return rows
+
+    assert dump(on) == dump(off)
+    # Sanity: the oncoming car still joins, the sideways one does not.
+    long = max(off, key=lambda t: t["hits"])
+    assert long["hits"] == 2
+    assert long["name"] == "vehicle"
+
+
+
 if __name__ == "__main__":
     test_front_camera_sees_the_road()
     test_ego_roundtrip_and_integration()
@@ -559,4 +631,6 @@ if __name__ == "__main__":
     test_a_close_approach_is_not_left_behind()
     test_the_tail_holds_its_heading_as_the_ego_turns()
     test_oncoming_car_is_not_held_still()
+    test_vru_assoc_joins_person_and_bicycle_across_a_range_jump()
+    test_vru_assoc_does_not_change_vehicle_tracks()
     print("ok")

@@ -42,6 +42,10 @@ _GATE = {
     "generic_object": 3.0,
 }
 
+# person / bicycle / cyclist / motorcycle share this family when vru_assoc is on
+# (overlay.py --rfdetr only). Vehicle association does not use it.
+_VRU_FAMILY = frozenset({"pedestrian", "bicycle"})
+
 # A missed detection can rejoin for about a second. Longer than that, the
 # track ends. A sideways jump is rejected separately: the car beside this
 # one can sit where the old speed predicts, with no gap at all.
@@ -138,12 +142,18 @@ def _vehicle_cost(predicted, box, pose) -> float:
     return (along / sigma_along) ** 2 + (lateral / 0.8) ** 2
 
 
-def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3) -> list[dict]:
+def track_objects(
+    frames: list[dict], score_min: float = 0.25, max_gap: int = 3, vru_assoc: bool = False
+) -> list[dict]:
     """Nearest-first constant-velocity tracker. frames carry pose + boxes in ego.
 
     box is [x, y, z, w, l, h, yaw, vx, vy] in the ego frame (lidar == ego).
     Pairs inside the class gate are assigned shortest-distance first so a
     nearby track cannot steal a detection that belongs to someone else.
+
+    vru_assoc is off by default. Overlay turns it on only with --rfdetr: a
+    pedestrian and a bicycle may then share a track, and they use the same
+    range-tolerant cost as cars. The vehicle path is unchanged either way.
     """
     tracks: list[dict] = []
     next_id = 1
@@ -162,7 +172,9 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
                 continue
             predicted, _dt = predictions[track_index]
             for j, det in enumerate(detections):
-                if det["name"] != track["name"]:
+                if det["name"] != track["name"] and not (
+                    vru_assoc and track["name"] in _VRU_FAMILY and det["name"] in _VRU_FAMILY
+                ):
                     continue
                 centre = ego_to_world(det["box"][None, :2], pose)[0]
                 if track["name"] == "vehicle":
@@ -173,6 +185,12 @@ def track_objects(frames: list[dict], score_min: float = 0.25, max_gap: int = 3)
                     # A real car does not move a lane sideways between frames.
                     if sideways > min(2.0 * max(elapsed / 0.07, 1.0), 3.5):
                         continue
+                    cost = _vehicle_cost(predicted, det["box"], pose)
+                    if cost > 9.0:
+                        continue
+                elif vru_assoc and track["name"] in _VRU_FAMILY:
+                    # Same range-tolerant cost as cars. A 2.2 m Euclidean ball
+                    # drops a person when monocular range jumps a few metres.
                     cost = _vehicle_cost(predicted, det["box"], pose)
                     if cost > 9.0:
                         continue
