@@ -32,6 +32,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from qdtrack.tracks import fit_lane_curves, integrate_ego, track_objects, world_to_ego, extend_tracks
+from qdtrack.tracks import DET_CLASS_NAMES
 
 MODEL = 640
 CONTENT_H = 360
@@ -557,6 +558,89 @@ def infer(source, weights, samples, camera, cache, lane_backend="yolopv2", lane_
     print("cached", len(boxes_out), flush=True)
 
 
+def _rfdetr():
+    """scripts/rfdetr_objects.py, imported only when --rfdetr is set."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import rfdetr_objects
+
+    return rfdetr_objects
+
+
+def build_frames_rfdetr(samples, poses, cache, camera, rf):
+    """Objects from RF-DETR, one class per box (see scripts/rfdetr_objects.py).
+
+    In mode "vru" the vehicles stay the YOLOPv2 boxes and RF-DETR adds the
+    vulnerable road users and animals; in mode "all" RF-DETR supplies every
+    object, with car, truck and bus kept apart. The lanes are YOLOPv2's either way.
+    """
+    rf_mod = _rfdetr()
+    data = np.load(cache, allow_pickle=True)
+    packed = []
+    for index, (sample, pose) in enumerate(zip(samples, poses)):
+        objects = rf_mod.frame_objects(rf["rows"][index], rf["names"][index], rf["threshold"])
+        if rf["mode"] == "vru":
+            objects = [item for item in objects if item[5] not in rf_mod.VEHICLES]
+            objects += [[float(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[6]), "vehicle"]
+                        for r in data["boxes"][index]]
+        groups = {}
+        for item in objects:
+            groups.setdefault(rf_mod.TRACKER_NAME[item[5]], []).append(item)
+        boxes, scores, labels, kinds, raw = [], [], [], [], []
+        for name in sorted(groups):
+            for item in kept_boxes(groups[name]):
+                point = ground_contact(camera, item[0], item[1], item[2], item[3])
+                if point is None:
+                    continue
+                width, length, height = rf_mod.SIZE[item[5]]
+                boxes.append([float(point[0]), float(point[1]), 0.0, width, length, height, 0.0, 0.0, 0.0])
+                scores.append(float(item[4]))
+                labels.append(DET_CLASS_NAMES.index(name))
+                kinds.append(item[5])
+                raw.append(item)
+        packed.append(
+            {
+                "token": str(index),
+                "t": sample["t"],
+                "pose": pose,
+                "boxes": np.asarray(boxes, dtype=np.float64).reshape(-1, 9),
+                "scores": np.asarray(scores, dtype=np.float64),
+                "labels": np.asarray(labels, dtype=np.int64),
+                "maps": {
+                    "road_line": list(data["lanes"][index]),
+                    "road_edge": [],
+                },
+                "image_boxes": raw,
+                "kinds": kinds,
+            }
+        )
+    return packed
+
+
+def assign_kinds(objects, packed):
+    """Each track takes the class most of its detections had (score-weighted)."""
+    rf_mod = _rfdetr()
+    by_token = {frame["token"]: frame for frame in packed}
+    for track in objects:
+        votes = []
+        for sample in track["samples"]:
+            frame = by_token.get(str(sample["token"]))
+            if frame is None or sample.get("predicted") or not sample.get("box"):
+                continue
+            for box, kind, score in zip(frame["boxes"], frame["kinds"], frame["scores"]):
+                if abs(round(float(box[0]), 4) - sample["box"][0]) < 1e-3 and abs(round(float(box[1]), 4) - sample["box"][1]) < 1e-3:
+                    votes.append((kind, float(score)))
+                    break
+        track["kind"] = rf_mod.vote_kind(votes) or "vehicle"
+
+
+def track_colour(track):
+    if track.get("kind"):
+        return _rfdetr().COLOUR[track["kind"]]
+    return colour(track["id"])
+
+
 def build_frames(samples, poses, cache, camera):
     data = np.load(cache, allow_pickle=True)
     packed = []
@@ -646,7 +730,8 @@ def draw_bev(objects, lanes, pose, width, height, now, wild=None, camera=None):
             cv2.polylines(panel, [np.asarray(current, np.int32)], False, paint, 2)
     for track in objects:
         if track["hits"] < 3 or track["name"] not in ("vehicle", "bicycle", "pedestrian"):
-            continue
+            if not (track.get("kind") and track["hits"] >= 3):
+                continue
         trail = []
         last_t = None
         history = [sample for sample in track["samples"] if int(sample["token"]) <= now][-40:]
@@ -655,13 +740,13 @@ def draw_bev(objects, lanes, pose, width, height, now, wild=None, camera=None):
             trail.append(screen(local))
             last_t = sample["token"]
         if len(trail) >= 2:
-            cv2.polylines(panel, [np.asarray(trail, np.int32)], False, colour(track["id"]), 2)
+            cv2.polylines(panel, [np.asarray(trail, np.int32)], False, track_colour(track), 2)
         if last_t is None or abs(int(last_t) - now) > 2:
             continue
         u, v = trail[-1]
         if 0 <= u < width and 0 <= v < height:
             cv2.circle(panel, (u, v), 9, (0, 0, 0), -1)
-            cv2.circle(panel, (u, v), 6, colour(track["id"]), -1)
+            cv2.circle(panel, (u, v), 6, track_colour(track), -1)
             cv2.putText(panel, str(track["id"]), (u + 6, v - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (240, 240, 240), 1)
     for det in wild or []:
         centre = det.get("center_ego")
@@ -676,11 +761,18 @@ def draw_bev(objects, lanes, pose, width, height, now, wild=None, camera=None):
     left = screen((-0.6, 0.8))
     right = screen((-0.6, -0.8))
     cv2.fillConvexPoly(panel, np.array([nose, left, right]), (230, 230, 230))
+    shown = []
+    for track in objects:
+        if track.get("kind") and track["hits"] >= 3 and track["kind"] not in shown:
+            shown.append(track["kind"])
+    if shown:
+        _rfdetr().legend(panel, sorted(shown), origin=(width - 120, 20))
     return panel
 
 
-def render(source, output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames=None):
+def render(source, output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames=None, packed_rf=None):
     by_token = {}
+    kind_of = {track["id"]: track.get("kind") for track in objects}
     for track in objects:
         for sample in track["samples"]:
             by_token.setdefault(sample["token"], []).append((track["id"], sample["box"]))
@@ -724,7 +816,9 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
             for segment in segments:
                 cv2.polylines(image, [np.asarray(segment, np.int32)], False, (40, 220, 60), 2)
         matched = by_token.get(str(index), [])
-        for row in kept_boxes(data["boxes"][index]):
+        if packed_rf is not None:
+            draw_kind_boxes(image, packed_rf[index], matched, kind_of, camera)
+        for row in ([] if packed_rf is not None else kept_boxes(data["boxes"][index])):
             point = ground_contact(camera, float(row[0]), float(row[1]), float(row[2]), float(row[3]))
             if point is None:
                 continue
@@ -762,6 +856,26 @@ def render(source, output, samples, poses, objects, lanes, cache, camera, frame_
     print("wrote", output, flush=True)
 
 
+def draw_kind_boxes(image, frame, matched, kind_of, camera):
+    """Front-view boxes in their class colour, labelled with class and track id."""
+    rf_mod = _rfdetr()
+    for item in frame["image_boxes"]:
+        point = ground_contact(camera, item[0], item[1], item[2], item[3])
+        if point is None:
+            continue
+        x1, y1, x2, y2 = [int(v) for v in item[:4]]
+        ident = None
+        for track_id, box in matched:
+            if abs(box[0] - point[0]) < 0.4 and abs(box[1] - point[1]) < 0.4:
+                ident = track_id
+                break
+        kind = kind_of.get(ident) or item[5]
+        paint = rf_mod.COLOUR[kind]
+        cv2.rectangle(image, (x1, y1), (x2, y2), paint, 2)
+        label = kind if ident is None else f"{kind} {ident}"
+        cv2.putText(image, label, (x1, max(16, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, paint, 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Front view and bird's-eye overlay for one clip.")
     parser.add_argument("--video", type=Path, help="Colour video, one view. Omit if --frames is set.")
@@ -779,6 +893,15 @@ def main():
     parser.add_argument("--reuse-boxes", type=Path, help="Keep the vehicle boxes in this cache and recompute the lanes.")
     parser.add_argument("--wilddet", type=Path, help="JSON from scripts/wilddet_clip.py. Drawn on top of the existing tracks.")
     parser.add_argument("--recompute", action="store_true")
+    parser.add_argument("--rfdetr", action="store_true",
+                        help="Optional, off by default. RF-DETR Large (COCO, fp32) supplies the objects with their own classes "
+                             "(car, truck, bus, person, cyclist, bicycle, motorcyclist, motorcycle, animals). YOLOPv2 keeps the lanes.")
+    parser.add_argument("--rfdetr-mode", choices=("all", "vru"), default="all",
+                        help="all: RF-DETR gives every object. vru: YOLOPv2 keeps the vehicles, RF-DETR adds VRUs and animals.")
+    parser.add_argument("--rfdetr-threshold", type=float, default=0.5, help="RF-DETR score threshold (cache keeps >= 0.2).")
+    parser.add_argument("--rfdetr-cache", type=Path, help="RF-DETR box cache. Default: <cache>_rfdetr.npz. Reused if it exists.")
+    parser.add_argument("--rfdetr-resolution", type=int, help="RF-DETR input size; default is the model's own (704).")
+    parser.add_argument("--rfdetr-device", default="cpu")
     args = parser.parse_args()
     if args.repeat < 1:
         raise SystemExit("--repeat must be at least 1")
@@ -813,10 +936,34 @@ def main():
             lane_config=args.lane_config, prior_boxes=prior,
         )
         source = open_frames(args.video, args.frames, camera, args.repeat)
-    packed = build_frames(samples, poses, cache, camera)
-    objects = track_objects(packed, score_min=0.4, max_gap=max(8, int(round(1.0 / frame_dt))))
+    rf = None
+    if args.rfdetr:
+        rf_mod = _rfdetr()
+        rf_cache = args.rfdetr_cache or rf_mod.default_cache(cache)
+        if args.recompute or not rf_cache.exists():
+            model = rf_mod.load_model(args.rfdetr_resolution, args.rfdetr_device)
+            frames = (image for image in iter(lambda: read_frame(source), None))
+            rf_mod.run_clip(model, frames, rf_cache)
+            source = open_frames(args.video, args.frames, camera, args.repeat)
+        rows, names = rf_mod.load_cache(rf_cache)
+        if len(rows) != len(samples):
+            raise SystemExit(f"RF-DETR cache has {len(rows)} frames, motion file has {len(samples)}")
+        rf = {"rows": rows, "names": names, "threshold": args.rfdetr_threshold, "mode": args.rfdetr_mode}
+    if rf is None:
+        packed = build_frames(samples, poses, cache, camera)
+        objects = track_objects(packed, score_min=0.4, max_gap=max(8, int(round(1.0 / frame_dt))))
+    else:
+        packed = build_frames_rfdetr(samples, poses, cache, camera, rf)
+        objects = track_objects(packed, score_min=min(0.4, args.rfdetr_threshold), max_gap=max(8, int(round(1.0 / frame_dt))))
     smooth_world(objects, poses, frame_dt)
     extend_tracks(objects, packed, horizon=2.0)
+    if rf is not None:
+        assign_kinds(objects, packed)
+        kinds = {}
+        for track in objects:
+            if track["hits"] >= 3:
+                kinds[track["kind"]] = kinds.get(track["kind"], 0) + 1
+        print("rfdetr tracks by class", kinds, flush=True)
     lanes = fit_lane_curves(packed, camera.project_many, camera.lift)
     print(
         "tracks", len(objects),
@@ -830,7 +977,8 @@ def main():
         wild_frames = json.loads(args.wilddet.read_text())["frames"]
         if len(wild_frames) != len(samples):
             raise SystemExit(f"wilddet file has {len(wild_frames)} frames, motion file has {len(samples)}")
-    render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames)
+    render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames,
+           packed_rf=packed if rf is not None else None)
 
 
 if __name__ == "__main__":

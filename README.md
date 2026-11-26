@@ -27,6 +27,19 @@ Lane lines can come from a second model. `--lane-backend twinlite` runs [TwinLit
 
 `--wilddet results/wilddet.json` draws a second set of boxes from WildDet3D on top of those tracks. The JSON comes from `scripts/wilddet_clip.py` on a GPU. Each box is labelled with the prompt name. The two numbers after the name are how far the model's 3D centre is from the ground-plane guess, in metres, forward and left. A diamond in the bird's-eye panel is that centre. The ground-plane tracks are unchanged.
 
+## Optional: RF-DETR objects (`--rfdetr`)
+
+Off by default; without the flag every output is byte-identical to before. With `--rfdetr`, [RF-DETR](https://github.com/roboflow/rf-detr) Large (Apache-2.0, `pip install rfdetr==1.12.1`, COCO weights, 704 px, fp32) supplies the objects and YOLOPv2 keeps the lane lines. Each object keeps its own class and colour in both panels: car, truck and bus, and every vulnerable road user COCO has: person, bicycle, motorcycle, and the animals (dog, cat, horse, cow, sheep, bird, elephant, bear, zebra, giraffe). A person on a bicycle box is one `cyclist`, on a motorcycle one `motorcyclist`. Car, truck and bus share the vehicle tracker and each track takes the class most of its detections had, so one frame read as a truck does not break a car track. The bird's-eye panel shows a class key.
+
+```bash
+python scripts/overlay.py --video clip.mp4 --motion clip_motion.csv --camera clip_camera.json \
+    --weights yolopv2.pt --output overlay.mp4 --rfdetr
+```
+
+- `--rfdetr-threshold 0.5` score threshold. The box cache keeps every score from 0.2 up, so another threshold needs no rerun.
+- `--rfdetr-mode all` (default) takes every object from RF-DETR; `vru` keeps the YOLOPv2 vehicle boxes and adds RF-DETR's vulnerable road users and animals.
+- `--rfdetr-cache` is the RF-DETR box cache (default `<cache>_rfdetr.npz`, reused unless `--recompute`). `--rfdetr-device cuda` runs it on a GPU.
+
 ## Motion file
 
 CSV with header `t_s,speed_mps,yaw_rate_rps`. One row per camera frame. `t_s` is seconds and must increase. `speed_mps` is the ego speed. `yaw_rate_rps` is radians per second, positive to the left. Axes are ISO 8855: x forward, y left, z up.
