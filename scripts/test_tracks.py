@@ -609,6 +609,84 @@ def test_vru_assoc_does_not_change_vehicle_tracks():
 
 
 
+def _rfdetr_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("rfdetr_objects", ROOT / "scripts" / "rfdetr_objects.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_label_mode_matches_kinds_one_to_one():
+    """A YOLOPv2 box takes the class of the RF-DETR box it overlaps most.
+
+    A person is never a vehicle label, an unmatched RF-DETR car stays extra,
+    and a second RF box on an already labelled vehicle is not a new object.
+    """
+    rf = _rfdetr_module()
+    yolo = [[100, 300, 200, 380, 0.9], [400, 300, 520, 400, 0.8]]
+    objects = [
+        [102, 302, 198, 378, 0.9, "truck"],
+        [405, 305, 515, 398, 0.7, "car"],
+        [440, 330, 520, 402, 0.6, "bus"],      # duplicate on the second box, lower IoU
+        [150, 300, 170, 380, 0.9, "person"],   # inside the first box, never its class
+        [700, 300, 760, 350, 0.8, "car"],      # RF-DETR only
+    ]
+    kinds, used = rf.match_kinds(yolo, objects)
+    assert kinds == [("truck", 0.9), ("car", 0.7)], kinds
+    assert used == {0, 1}, used
+    extra = rf.extra_objects(yolo, objects)
+    assert [item[5] for item in extra] == ["person", "car"], extra
+
+
+def test_label_mode_keeps_vehicle_tracks_identical(tmp_dir=None):
+    """--rfdetr-mode label changes no vehicle track, only adds kind/source."""
+    import importlib.util
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location("overlay", ROOT / "scripts" / "overlay.py")
+    overlay = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(overlay)
+    camera = overlay.CylinderCamera(600.0, 600.0, 320.0, 240.0, [1.5, 0.0, 1.4], 640, 480)
+    count = 30
+    samples = [{"t": 0.1 * i, "speed_mps": 5.0, "yaw_rate": 0.0} for i in range(count)]
+    from qdtrack.tracks import integrate_ego
+
+    poses = integrate_ego(samples)
+    boxes, rows, names = [], [], []
+    for i in range(count):
+        car = [300 - i, 300, 340 - i, 330 + i * 0.5, 0, 0, 0.9]
+        truck = [420, 290, 500, 340, 0, 0, 0.8]
+        boxes.append(np.asarray([car, truck], np.float32))
+        rows.append(np.asarray([[c + 1 for c in car[:4]] + [0.9], truck[:4] + [0.9],
+                                [100, 300, 115, 360, 0.9]], np.float32))
+        names.append(["car", "truck", "person"])
+    with tempfile.TemporaryDirectory() as folder:
+        cache = Path(folder) / "cache.npz"
+        np.savez_compressed(cache, boxes=np.array(boxes, dtype=object), scores=np.array([b[:, 6] for b in boxes], dtype=object),
+                            lanes=np.array([[] for _ in boxes], dtype=object), edges=np.array([[] for _ in boxes], dtype=object),
+                            lane_space=np.array("image"))
+        packed = overlay.build_frames(samples, poses, cache, camera)
+        ref = overlay.track_objects(packed, score_min=0.4, max_gap=10)
+        overlay.smooth_world(ref, poses, 0.1)
+        overlay.extend_tracks(ref, packed, horizon=2.0)
+        rf = {"rows": rows, "names": names, "threshold": 0.5, "mode": "label"}
+        vehicles, others, _packed, render = overlay.track_label_mode(samples, poses, cache, camera, rf, 0.1)
+
+    def strip(tracks):
+        return json.dumps([{k: v for k, v in t.items() if k not in ("kind", "source", "rf_only")} for t in tracks],
+                          sort_keys=True, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+
+    assert strip(vehicles) == strip(ref)
+    assert sorted(t["kind"] for t in vehicles if t["hits"] >= 3) == ["car", "truck"], [t["kind"] for t in vehicles]
+    assert all(t["source"] == "yolopv2" and not t["rf_only"] for t in vehicles)
+    people = [t for t in others if t["hits"] >= 3]
+    assert [t["kind"] for t in people] == ["person"], [(t["kind"], t["hits"]) for t in others]
+    assert people[0]["id"] > overlay.LABEL_ID_OFFSET and people[0]["source"] == "rfdetr" and not people[0]["rf_only"]
+    assert len(render) == count
+
+
 if __name__ == "__main__":
     test_front_camera_sees_the_road()
     test_ego_roundtrip_and_integration()
@@ -633,4 +711,6 @@ if __name__ == "__main__":
     test_oncoming_car_is_not_held_still()
     test_vru_assoc_joins_person_and_bicycle_across_a_range_jump()
     test_vru_assoc_does_not_change_vehicle_tracks()
+    test_label_mode_matches_kinds_one_to_one()
+    test_label_mode_keeps_vehicle_tracks_identical()
     print("ok")

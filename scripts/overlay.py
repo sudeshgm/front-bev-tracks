@@ -635,6 +635,89 @@ def assign_kinds(objects, packed):
         track["kind"] = rf_mod.vote_kind(votes) or "vehicle"
 
 
+LABEL_ID_OFFSET = 100000  # RF-DETR-only tracks in --rfdetr-mode label start here
+
+
+def track_label_mode(samples, poses, cache, camera, rf, frame_dt):
+    """--rfdetr-mode label: classes from RF-DETR, vehicle geometry from YOLOPv2.
+
+    The vehicle frames, tracks, smoothing and tails are the default path, call
+    for call, so every vehicle track is identical to a run without --rfdetr.
+    Each vehicle track only gains "kind" (car, truck, bus, motorcyclist, ...)
+    from the RF-DETR box its detections overlapped most (score-weighted vote),
+    and "source": "yolopv2". RF-DETR objects that are not a YOLOPv2 box are
+    tracked in a second, separate pass (ids from LABEL_ID_OFFSET, "source":
+    "rfdetr"); a car, truck or bus seen only by RF-DETR is marked rf_only so the
+    vehicle tags can leave it out.
+
+    Returns (vehicle_tracks, rf_tracks, packed, render_frames). packed is the
+    default vehicle frame list (lanes are fitted on it).
+    """
+    rf_mod = _rfdetr()
+    gap = max(8, int(round(1.0 / frame_dt)))
+    packed = build_frames(samples, poses, cache, camera)
+    vehicles = track_objects(packed, score_min=0.4, max_gap=gap)
+    smooth_world(vehicles, poses, frame_dt)
+    extend_tracks(vehicles, packed, horizon=2.0)
+
+    extra_frames, render_frames, labels_by_token = [], [], {}
+    for index, frame in enumerate(packed):
+        objects = rf_mod.frame_objects(rf["rows"][index], rf["names"][index], rf["threshold"])
+        yolo = [row for row in frame["image_boxes"]
+                if ground_contact(camera, float(row[0]), float(row[1]), float(row[2]), float(row[3])) is not None]
+        kinds, _used = rf_mod.match_kinds(yolo, objects)
+        labels_by_token[frame["token"]] = list(zip(frame["boxes"], kinds))
+        extra = rf_mod.extra_objects(yolo, objects)
+        boxes, scores, labels, extra_kinds, raw = [], [], [], [], []
+        groups = {}
+        for item in extra:
+            groups.setdefault(rf_mod.TRACKER_NAME[item[5]], []).append(item)
+        for name in sorted(groups):
+            for item in kept_boxes(groups[name]):
+                point = ground_contact(camera, item[0], item[1], item[2], item[3])
+                if point is None:
+                    continue
+                width, length, height = rf_mod.SIZE[item[5]]
+                boxes.append([float(point[0]), float(point[1]), 0.0, width, length, height, 0.0, 0.0, 0.0])
+                scores.append(float(item[4]))
+                labels.append(DET_CLASS_NAMES.index(name))
+                extra_kinds.append(item[5])
+                raw.append(item)
+        extra_frames.append({
+            "token": frame["token"], "t": frame["t"], "pose": frame["pose"],
+            "boxes": np.asarray(boxes, dtype=np.float64).reshape(-1, 9),
+            "scores": np.asarray(scores, dtype=np.float64),
+            "labels": np.asarray(labels, dtype=np.int64),
+            "maps": frame["maps"], "image_boxes": raw, "kinds": extra_kinds,
+        })
+        render_frames.append({"image_boxes": [[float(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), "vehicle"]
+                                              for r in yolo] + raw})
+
+    for track in vehicles:
+        votes = []
+        for sample in track["samples"]:
+            if sample.get("predicted") or not sample.get("box"):
+                continue
+            for box, kind in labels_by_token.get(str(sample["token"]), []):
+                if abs(round(float(box[0]), 4) - sample["box"][0]) < 1e-3 and abs(round(float(box[1]), 4) - sample["box"][1]) < 1e-3:
+                    if kind is not None:
+                        votes.append(kind)
+                    break
+        track["kind"] = rf_mod.vote_kind(votes) or "vehicle"
+        track["source"] = "yolopv2"
+        track["rf_only"] = False
+
+    others = track_objects(extra_frames, score_min=min(0.4, rf["threshold"]), max_gap=gap, vru_assoc=True)
+    smooth_world(others, poses, frame_dt)
+    extend_tracks(others, extra_frames, horizon=2.0)
+    assign_kinds(others, extra_frames)
+    for track in others:
+        track["id"] = int(track["id"]) + LABEL_ID_OFFSET
+        track["source"] = "rfdetr"
+        track["rf_only"] = track["kind"] in rf_mod.VEHICLES
+    return vehicles, others, packed, render_frames
+
+
 def track_colour(track):
     if track.get("kind"):
         return _rfdetr().COLOUR[track["kind"]]
@@ -896,8 +979,9 @@ def main():
     parser.add_argument("--rfdetr", action="store_true",
                         help="Optional, off by default. RF-DETR Large (COCO, fp32) supplies the objects with their own classes "
                              "(car, truck, bus, person, cyclist, bicycle, motorcyclist, motorcycle, animals). YOLOPv2 keeps the lanes.")
-    parser.add_argument("--rfdetr-mode", choices=("all", "vru"), default="all",
-                        help="all: RF-DETR gives every object. vru: YOLOPv2 keeps the vehicles, RF-DETR adds VRUs and animals.")
+    parser.add_argument("--rfdetr-mode", choices=("all", "vru", "label"), default="all",
+                        help="all: RF-DETR gives every object. vru: YOLOPv2 keeps the vehicles, RF-DETR adds VRUs and animals. "
+                             "label: YOLOPv2 vehicle tracks unchanged, each takes its RF-DETR class; RF-DETR adds the rest.")
     parser.add_argument("--rfdetr-threshold", type=float, default=0.5, help="RF-DETR score threshold (cache keeps >= 0.2).")
     parser.add_argument("--rfdetr-cache", type=Path, help="RF-DETR box cache. Default: <cache>_rfdetr.npz. Reused if it exists.")
     parser.add_argument("--rfdetr-resolution", type=int, help="RF-DETR input size; default is the model's own (704).")
@@ -949,7 +1033,17 @@ def main():
         if len(rows) != len(samples):
             raise SystemExit(f"RF-DETR cache has {len(rows)} frames, motion file has {len(samples)}")
         rf = {"rows": rows, "names": names, "threshold": args.rfdetr_threshold, "mode": args.rfdetr_mode}
-    if rf is None:
+    render_rf = None
+    if rf is not None and rf["mode"] == "label":
+        vehicles, others, packed, render_rf = track_label_mode(samples, poses, cache, camera, rf, frame_dt)
+        objects = vehicles + others
+        kinds = {}
+        for track in objects:
+            if track["hits"] >= 3:
+                key = track["kind"] + (" (rf_only)" if track["rf_only"] else "")
+                kinds[key] = kinds.get(key, 0) + 1
+        print("label tracks by class", kinds, flush=True)
+    elif rf is None:
         packed = build_frames(samples, poses, cache, camera)
         objects = track_objects(packed, score_min=0.4, max_gap=max(8, int(round(1.0 / frame_dt))))
     else:
@@ -960,9 +1054,11 @@ def main():
             max_gap=max(8, int(round(1.0 / frame_dt))),
             vru_assoc=True,
         )
-    smooth_world(objects, poses, frame_dt)
-    extend_tracks(objects, packed, horizon=2.0)
-    if rf is not None:
+    if render_rf is None:
+        smooth_world(objects, poses, frame_dt)
+        extend_tracks(objects, packed, horizon=2.0)
+    if rf is not None and render_rf is None:
+        render_rf = packed
         assign_kinds(objects, packed)
         kinds = {}
         for track in objects:
@@ -983,7 +1079,7 @@ def main():
         if len(wild_frames) != len(samples):
             raise SystemExit(f"wilddet file has {len(wild_frames)} frames, motion file has {len(samples)}")
     render(source, args.output, samples, poses, objects, lanes, cache, camera, frame_dt, wild_frames,
-           packed_rf=packed if rf is not None else None)
+           packed_rf=render_rf)
 
 
 if __name__ == "__main__":

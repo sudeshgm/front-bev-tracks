@@ -216,3 +216,52 @@ def legend(panel, kinds, origin=(8, 20)):
 def default_cache(cache):
     cache = Path(cache)
     return cache.with_name(cache.stem + "_rfdetr.npz")
+
+
+# --rfdetr-mode label: YOLOPv2 keeps every vehicle box and track exactly as
+# without the flag. A YOLOPv2 box only borrows the class of the RF-DETR box it
+# overlaps most. These are the kinds a YOLOPv2 vehicle box may take.
+LABEL_KINDS = VEHICLES + ("motorcyclist", "motorcycle", "cyclist", "bicycle")
+LABEL_IOU = 0.3
+
+
+def match_kinds(yolo_rows, objects, iou_min=LABEL_IOU):
+    """One-to-one match of YOLOPv2 boxes to RF-DETR objects, highest IoU first.
+
+    yolo_rows: [x1, y1, x2, y2, ...] image boxes. objects: frame_objects() output.
+    Returns (kinds, used): kinds[i] is (kind, score) for yolo row i or None, and
+    used is the set of object indices that labelled a YOLOPv2 box.
+    """
+    pairs = []
+    for i, row in enumerate(yolo_rows):
+        for j, item in enumerate(objects):
+            if item[5] not in LABEL_KINDS:
+                continue
+            overlap = _iou(row, item)
+            if overlap >= iou_min:
+                pairs.append((-overlap, i, j))
+    kinds = [None] * len(yolo_rows)
+    used = set()
+    for _cost, i, j in sorted(pairs):
+        if kinds[i] is not None or j in used:
+            continue
+        kinds[i] = (objects[j][5], float(objects[j][4]))
+        used.add(j)
+    return kinds, used
+
+
+def extra_objects(yolo_rows, objects, iou_min=LABEL_IOU):
+    """RF-DETR objects that are not already a YOLOPv2 vehicle box.
+
+    VRUs and animals that YOLOPv2 did not see, plus RF-DETR-only cars, trucks
+    and buses (those become flagged rf_only tracks, never vehicle-tag input).
+    """
+    _kinds, used = match_kinds(yolo_rows, objects, iou_min)
+    out = []
+    for j, item in enumerate(objects):
+        if j in used:
+            continue
+        if item[5] in LABEL_KINDS and any(_iou(row, item) >= iou_min for row in yolo_rows):
+            continue  # a second RF box on an already labelled YOLOPv2 vehicle
+        out.append(item)
+    return out

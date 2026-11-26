@@ -37,7 +37,7 @@ python scripts/overlay.py --video clip.mp4 --motion clip_motion.csv --camera cli
 ```
 
 - `--rfdetr-threshold 0.5` score threshold. The box cache keeps every score from 0.2 up, so another threshold needs no rerun.
-- `--rfdetr-mode all` (default) takes every object from RF-DETR; `vru` keeps the YOLOPv2 vehicle boxes and adds RF-DETR's vulnerable road users and animals.
+- `--rfdetr-mode all` (default) takes every object from RF-DETR; `vru` keeps the YOLOPv2 vehicle boxes and adds RF-DETR's vulnerable road users and animals. `label` keeps every YOLOPv2 vehicle box and track exactly as without `--rfdetr` and only gives each vehicle track the class (car, truck, bus, motorcyclist, cyclist, ...) of the RF-DETR box it overlapped most, score-weighted over the track (`kind`, `source: yolopv2`). RF-DETR objects that are not a YOLOPv2 box (VRUs, animals, and cars, trucks or buses only RF-DETR saw) are tracked in a separate pass, with ids from 100000 and `source: rfdetr`; a vehicle among them is marked `rf_only` so vehicle tags can leave it out. `track_label_mode()` returns both sets for callers that do not go through `main()`.
 - `--rfdetr-cache` is the RF-DETR box cache (default `<cache>_rfdetr.npz`, reused unless `--recompute`). `--rfdetr-device cuda` runs it on a GPU.
 
 ## Motion file
