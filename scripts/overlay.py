@@ -33,6 +33,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from qdtrack.tracks import fit_lane_curves, integrate_ego, track_objects, world_to_ego, extend_tracks
 from qdtrack.tracks import DET_CLASS_NAMES
+from qdtrack import vru_motion
 
 MODEL = 640
 CONTENT_H = 360
@@ -367,6 +368,29 @@ def smooth_world(tracks, poses, frame_dt):
         for sample, point in zip(track["samples"], path):
             sample["world"] = [float(point[0]), float(point[1])]
         track["samples"].extend(predicted)
+
+
+VRU_SMOOTHER = "kalman"  # set from --vru-smoother
+
+
+def apply_vru_smoother(tracks, frames, poses, frame_dt):
+    """Pedestrian and cyclist tracks: replace the vehicle smoothing.
+
+    smooth_world is tuned for cars and turns a standing person's range jitter
+    into metres per second of walking (see qdtrack/vru_motion.py). Every VRU
+    track gains track["vru_motion"] (speed, stationary, displacement, noise)
+    and per-sample world_raw / world_vru / vel_vru. With --vru-smoother kalman
+    (default) its "world" becomes the VRU-smoothed position and its predicted
+    tail is rebuilt from that; with legacy, "world" keeps smooth_world's output.
+    Vehicle tracks (and rf_only vehicles) are not touched.
+    """
+    vru = [track for track in tracks if vru_motion.is_vru(track.get("kind"))]
+    if not vru:
+        return
+    replace = VRU_SMOOTHER == "kalman"
+    vru_motion.annotate_vru_tracks(vru, poses, frame_dt, replace_world=replace)
+    if replace:
+        extend_tracks(vru, frames, horizon=2.0)
 
 
 def open_frames(video, frames, camera, repeat):
@@ -708,9 +732,11 @@ def track_label_mode(samples, poses, cache, camera, rf, frame_dt):
         track["rf_only"] = False
 
     others = track_objects(extra_frames, score_min=min(0.4, rf["threshold"]), max_gap=gap, vru_assoc=True)
+    vru_motion.keep_raw_world(others)
     smooth_world(others, poses, frame_dt)
     extend_tracks(others, extra_frames, horizon=2.0)
     assign_kinds(others, extra_frames)
+    apply_vru_smoother(others, extra_frames, poses, frame_dt)
     for track in others:
         track["id"] = int(track["id"]) + LABEL_ID_OFFSET
         track["source"] = "rfdetr"
@@ -986,7 +1012,13 @@ def main():
     parser.add_argument("--rfdetr-cache", type=Path, help="RF-DETR box cache. Default: <cache>_rfdetr.npz. Reused if it exists.")
     parser.add_argument("--rfdetr-resolution", type=int, help="RF-DETR input size; default is the model's own (704).")
     parser.add_argument("--rfdetr-device", default="cpu")
+    parser.add_argument("--vru-smoother", choices=("kalman", "legacy"), default="kalman",
+                        help="Pedestrian/cyclist tracks under --rfdetr. kalman: VRU smoother (walking <= 2.5 m/s, "
+                             "cycling <= 8 m/s, range^2 noise, outlier gate, stationary hold; qdtrack/vru_motion.py). "
+                             "legacy: the vehicle smooth_world, as before. Vehicles always keep smooth_world.")
     args = parser.parse_args()
+    global VRU_SMOOTHER
+    VRU_SMOOTHER = args.vru_smoother
     if args.repeat < 1:
         raise SystemExit("--repeat must be at least 1")
     camera = CylinderCamera.load(args.camera)
@@ -1055,11 +1087,14 @@ def main():
             vru_assoc=True,
         )
     if render_rf is None:
+        if rf is not None:
+            vru_motion.keep_raw_world(objects)
         smooth_world(objects, poses, frame_dt)
         extend_tracks(objects, packed, horizon=2.0)
     if rf is not None and render_rf is None:
         render_rf = packed
         assign_kinds(objects, packed)
+        apply_vru_smoother(objects, packed, poses, frame_dt)
         kinds = {}
         for track in objects:
             if track["hits"] >= 3:
