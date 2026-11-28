@@ -43,11 +43,11 @@ flowchart LR
   ego --> out
 ```
 
-1. **WildDet3D** — open-vocabulary 3D boxes for `car`, `person`, and `bicycle`, plus prompt boxes for lane lines and road edges.
-2. **SAM 2.1** — box-prompted masks.
-3. **Depth Anything V2** — per-pixel depth, lifted onto a ground-plane bird's-eye view.
-4. **Tracks and lines** — ByteTrack-style association with a Kalman filter; lane lines and road edges are tracked separately.
-5. **Ego speed and yaw** — on the six KITTI clips, yaw and speed are scored against KITTI OXTS (GPS/IMU) ground truth.
+1. **WildDet3D:** open-vocabulary 3D boxes for `car`, `person`, and `bicycle`, plus prompt boxes for lane lines and road edges.
+2. **SAM 2.1:** box-prompted masks.
+3. **Depth Anything V2:** per-pixel depth, lifted onto a ground-plane bird's-eye view.
+4. **Tracks and lines:** ByteTrack-style association with a Kalman filter. Lane lines and road edges are tracked separately.
+5. **Ego speed and yaw:** on the six KITTI clips, yaw and speed are scored against KITTI OXTS (GPS/IMU) ground truth.
 
 Details, environment variables, and earlier iteration history live in [`foundation_bev/README.md`](https://github.com/sudeshgm/front-bev-tracks/blob/foundation-bev/foundation_bev/README.md) on the `foundation-bev` branch.
 
@@ -69,7 +69,7 @@ The bird's-eye panel shows only those elements. It does not draw depth maps, edg
 
 Validated on a T4 GPU over nine public clips (six KITTI, one Munich dashcam, two A2D2). Yaw and speed figures are from [`ego_eval_oxts.txt`](https://github.com/sudeshgm/front-bev-tracks/blob/foundation-bev/foundation_bev/results/iter15/ego_eval_oxts.txt) and iter15 [`metrics.md`](https://github.com/sudeshgm/front-bev-tracks/blob/foundation-bev/foundation_bev/results/iter15/metrics.md). The YOLOPv2 smoothness column is the committed measurement-only baseline in [`results/iter13/metrics_yolo_vs_run.md`](https://github.com/sudeshgm/front-bev-tracks/blob/foundation-bev/foundation_bev/results/iter13/metrics_yolo_vs_run.md); iter15 did not re-publish that file. Iter15 lane-width jitter on these KITTI clips matches the iter13 working run, except `kitti_highway_final` (0.006 → 0.008), which is now equal to the baseline.
 
-**Ego yaw versus KITTI OXTS** (mean absolute error, deg/s). Iter15 fixes a sign error that had mirrored drawn turns since iter3, and estimates yaw from ECC alignment of consecutive road-masked BEV frames:
+**Ego yaw versus KITTI OXTS** (mean absolute error, deg/s). Iter15 fixes a sign error that had mirrored drawn turns since iter3. Yaw is estimated from ECC alignment of consecutive road-masked BEV frames:
 
 | Clip | Before | Iter15 |
 |---|---:|---:|
@@ -82,7 +82,7 @@ Validated on a T4 GPU over nine public clips (six KITTI, one Munich dashcam, two
 
 Yaw MAE is lower on all six KITTI clips.
 
-**Ego speed versus KITTI OXTS.** Mean absolute speed error on the six KITTI clips fell from 7.7% to 5.6%. `kitti_highway_late` went from −9.2% to +0.4% and `kitti_highway_exit_approach` from −4.0% to +2.6%. `kitti_highway_final` is the clip that got worse (−1.5% to +4.0%). `kitti_lane_split_candidate` stays at −18% (the pitch correction does not run when there are fewer than five lane pairs).
+**Ego speed versus KITTI OXTS.** Mean absolute speed error on the six KITTI clips fell from 7.7% to 5.6%. `kitti_highway_late` went from −9.2% to +0.4%, and `kitti_highway_exit_approach` from −4.0% to +2.6%. `kitti_highway_final` is the clip that got worse (−1.5% to +4.0%). `kitti_lane_split_candidate` stays at −18%, because the pitch correction does not run when there are fewer than five lane pairs.
 
 **Lane smoothness versus the YOLOPv2 baseline.** Median lane-width jitter at 10 m ahead (metres; lower is smoother). On the straight KITTI highway and city clips, iter15 is at or below the baseline; on `kitti_lane_split_candidate` width jitter remains higher (0.131 vs 0.092), which the iter notes treat as structural.
 
